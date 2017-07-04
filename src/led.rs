@@ -1,34 +1,32 @@
 //! User LEDs
-//!
-//! - Green = PC13
 
-use stm32f103xx::{GPIOC, RCC};
+use stm32f411::{GPIOA, RCC};
 
-/// Green LED (PC13)
+/// Green LED (PA5)
 pub struct Green;
 
 /// Initializes the user LED
-pub fn init(gpioc: &GPIOC, rcc: &RCC) {
-    // power on GPIOC
-    rcc.apb2enr.modify(|_, w| w.iopcen().enabled());
+pub fn init(gpioa: &GPIOA, rcc: &RCC) {
+    // power on GPIOA
+    rcc.ahb1enr.modify(|_, w| w.gpioaen().enabled());
 
-    // configure PC13 as output
-    gpioc.bsrr.write(|w| w.bs13().set());
-    gpioc.crh.modify(|_, w| w.mode13().output().cnf13().push());
+    // configure PA5 as output
+    gpioa.moder.write(|w| w.mode5().output());
+    gpioa.bsrr.write(|w| w.bs5.set());
 }
 
 impl Green {
     /// Turns the LED on
     pub fn on(&self) {
         unsafe {
-            (*GPIOC.get()).bsrr.write(|w| w.br13().reset());
+            (*GPIOA.get()).bsrr.write(|w| w.br5().reset())
         }
     }
 
     /// Turns the LED off
     pub fn off(&self) {
         unsafe {
-            (*GPIOC.get()).bsrr.write(|w| w.bs13().set());
+            (*GPIOA.get()).bsrr.write(|w| w.bs5().set())
         }
     }
 }

@@ -1,6 +1,6 @@
-//! Board Support Crate for the [Blue Pill]
+//! Board Support Crate for the [bsp]
 //!
-//! [Blue Pill]: http://wiki.stm32duino.com/index.php?title=Blue_Pill
+//! [bsp]: http://wiki.stm32duino.com/index.php?title=Blue_Pill
 //!
 //! # Usage
 //!
@@ -25,25 +25,25 @@ extern crate nb;
 extern crate static_ref;
 extern crate volatile_register;
 
-pub extern crate stm32f103xx;
-
+pub extern crate stm32f411;
+/*
 pub mod adc;
 pub mod capture;
-pub mod dma;
-pub mod gpio;
+pub mod dma;*/
+// pub mod gpio;
 pub mod led;
-pub mod pwm;
+/*pub mod pwm;
 pub mod qei;
 pub mod serial;
-pub mod spi;
+pub mod spi;*/
 pub mod time;
 pub mod timer;
 
-pub use capture::Capture;
+/*pub use capture::Capture;
 pub use pwm::Pwm;
 pub use qei::Qei;
 pub use serial::Serial;
-pub use spi::Spi;
+pub use spi::Spi;*/
 pub use timer::{Channel, Timer};
 
 macro_rules! frequency {

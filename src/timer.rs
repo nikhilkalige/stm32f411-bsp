@@ -6,7 +6,7 @@ use core::ops::Deref;
 use cast::{u16, u32};
 use hal;
 use nb::{self, Error};
-use stm32f103xx::{GPIOA, GPIOB, RCC, TIM1, TIM2, TIM3, TIM4, gpioa, tim2};
+use stm32f411::{GPIOA, GPIOB, RCC, TIM1, TIM2, TIM3, TIM4, gpioa, tim2, tim3};
 
 /// Channel associated to a timer
 #[derive(Clone, Copy, Debug)]

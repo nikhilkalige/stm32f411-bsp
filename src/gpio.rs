@@ -5,7 +5,7 @@
 //! - PB14
 //! - PB15
 
-use stm32f103xx::{GPIOB, RCC};
+use stm32f411::{GPIOB, RCC};
 
 /// Initializes the digital outputs
 pub fn init(gpiob: &GPIOB, rcc: &RCC) {

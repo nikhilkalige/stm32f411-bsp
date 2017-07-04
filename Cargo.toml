@@ -4,13 +4,12 @@ categories = ["asynchronous", "embedded", "hardware-support", "no-std"]
 description = "Board Support Crate for the Blue Pill"
 keywords = ["arm", "cortex-m", "stm32"]
 license = "MIT OR Apache-2.0"
-name = "blue-pill"
+name = "bsp"
 repository = "https://github.com/japaric/blue-pill"
 version = "0.1.0"
 
 [dependencies]
 static-ref = "0.1.0"
-stm32f103xx = "0.6.1"
 volatile-register = "0.2.0"
 
 [dependencies.cast]
@@ -21,9 +20,12 @@ version = "0.2.2"
 default-features = false
 version = "1.1.0"
 
+[dependencies.stm32f411]
+optional = false
+path = "../stm32f411/"
+
 [dependencies.embedded-hal]
 git = "https://github.com/japaric/embedded-hal"
-rev = "5295697669f5b48a900aa325b8ebb4d4e8d4b236"
 
 [dependencies.nb]
 git = "https://github.com/japaric/nb"
