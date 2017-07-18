@@ -10,12 +10,12 @@
 //!
 //! [i]: https://docs.rs/cortex-m-quickstart/0.1.8/cortex_m_quickstart/
 
-#![deny(missing_docs)]
+#![allow(missing_docs)]
 #![deny(warnings)]
 #![feature(const_fn)]
 #![feature(get_type_id)]
 #![feature(never_type)]
-#![feature(unsize)]
+// #![feature(unsize)]
 #![no_std]
 
 extern crate cast;
@@ -34,8 +34,8 @@ pub mod dma;*/
 pub mod led;
 /*pub mod pwm;
 pub mod qei;
-pub mod serial;
-pub mod spi;*/
+pub mod serial;*/
+pub mod spi;
 pub mod time;
 pub mod timer;
 

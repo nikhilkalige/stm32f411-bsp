@@ -11,24 +11,26 @@ use stm32f411::{GPIOB, RCC};
 pub fn init(gpiob: &GPIOB, rcc: &RCC) {
     rcc.apb2enr.modify(|_, w| w.iopben().enabled());
 
-    gpiob.crh.modify(|_, w| {
-        w.mode12()
-            .bits(0b10)
-            .cnf12()
-            .bits(0b00)
-            .mode13()
-            .bits(0b10)
-            .cnf13()
-            .bits(0b00)
-            .mode14()
-            .bits(0b10)
-            .cnf14()
-            .bits(0b00)
-            .mode15()
-            .bits(0b10)
-            .cnf15()
-            .bits(0b00)
-    });
+    gpiob
+        .crh
+        .modify(|_, w| {
+            w.mode12()
+                .bits(0b10)
+                .cnf12()
+                .bits(0b00)
+                .mode13()
+                .bits(0b10)
+                .cnf13()
+                .bits(0b00)
+                .mode14()
+                .bits(0b10)
+                .cnf14()
+                .bits(0b00)
+                .mode15()
+                .bits(0b10)
+                .cnf15()
+                .bits(0b00)
+        });
 }
 
 macro_rules! pin {
