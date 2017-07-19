@@ -43,8 +43,9 @@ use core::ptr;
 
 use hal;
 use nb;
-use stm32f411::{GPIOA, GPIOB, GPIOC, RCC, SPI1, SPI2, i2s2ext};
+use stm32f411::{DMA1, GPIOA, GPIOB, GPIOC, RCC, SPI1, SPI2, i2s2ext};
 
+use dma::{self, Buffer, DmaStream1, DmaStream2};
 
 /// SPI instance that can be used with the `Spi` abstraction
 pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
@@ -52,7 +53,7 @@ pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
     // type GPIO: Deref<Target = gpioa::RegisterBlock>;
     type GPIO1: Deref;
     type GPIO2: Deref;
-
+    type Ticks: Into<u32>;
 
     fn init(&self, gpio1: &Self::GPIO1, gpio2: &Self::GPIO2, rcc: &RCC);
 }
@@ -60,6 +61,7 @@ pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
 unsafe impl SPI for SPI1 {
     type GPIO1 = GPIOA;
     type GPIO2 = GPIOA;
+    type Ticks = ::apb2::Ticks;
 
     fn init(&self, gpioa: &Self::GPIO1, _gpio2: &Self::GPIO2, rcc: &RCC) {
         // enable GPIO's and SPI1
@@ -87,6 +89,7 @@ unsafe impl SPI for SPI1 {
 unsafe impl SPI for SPI2 {
     type GPIO1 = GPIOB;
     type GPIO2 = GPIOC;
+    type Ticks = ::apb2::Ticks;
 
     fn init(&self, gpiob: &Self::GPIO1, gpioc: &Self::GPIO2, rcc: &RCC) {
         // enable GPIO's and SPI1
@@ -149,6 +152,16 @@ pub enum Error {
     _Extensible,
 }
 
+/// Interrupt event
+pub enum Event {
+    /// RX buffer Not Empty (new data available)
+    Rxne,
+    /// Transmission Complete
+    Tc,
+    /// TX buffer Empty (more data can be send)
+    Txe,
+}
+
 /// Serial Peripheral Interface
 pub struct Spi<'a, S>(pub &'a S)
 where
@@ -173,6 +186,14 @@ impl<'a, S> Spi<'a, S>
 where
     S: Any + SPI,
 {
+    /// Initializes the spi interface with speed of `speed` bits per second.
+    pub fn init<B>(&self, speed: B, gpio1: &S::GPIO1, gpio2: &S::GPIO2, dma: Option<&DMA1>, rcc: &RCC)
+        where B: Into<S::Ticks>
+    {
+        let spi = self.0;
+        spi.init(gpio1, gpio2, rcc);
+    }
+
     /// Disables the SPI bus
     ///
     /// **NOTE** This drives the NSS pin high

@@ -32,6 +32,7 @@ pub mod capture;
 pub mod dma;*/
 // pub mod gpio;
 pub mod led;
+pub mod dma;
 /*pub mod pwm;
 pub mod qei;
 pub mod serial;*/

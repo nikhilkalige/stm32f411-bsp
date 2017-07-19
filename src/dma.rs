@@ -5,7 +5,7 @@ use core::marker::{PhantomData, Unsize};
 use core::{ops, slice};
 
 use nb;
-use stm32f103xx::DMA1;
+use stm32f411::DMA1;
 use volatile_register::RO;
 
 /// DMA error
@@ -21,28 +21,24 @@ pub enum Error {
 }
 
 /// Channel 1 of DMA1
-pub struct Dma1Channel1 {
-    _0: (),
+pub struct DmaStream1 {
 }
 
 /// Channel 2 of DMA1
-pub struct Dma1Channel2 {
-    _0: (),
+pub struct DmaStream2 {
 }
 
 /// Channel 4 of DMA1
-pub struct Dma1Channel4 {
-    _0: (),
+pub struct DmaStream4 {
 }
 
 /// Channel 5 of DMA1
-pub struct Dma1Channel5 {
-    _0: (),
+pub struct DmaStream5 {
 }
 
-/// Buffer to be used with a certain DMA `CHANNEL`
-pub struct Buffer<T, CHANNEL> {
-    _marker: PhantomData<CHANNEL>,
+/// Buffer to be used with a certain DMA `STREAM`
+pub struct Buffer<T, STREAM> {
+    _marker: PhantomData<STREAM>,
     data: UnsafeCell<T>,
     flag: Cell<BorrowFlag>,
     status: Cell<Status>,
@@ -112,7 +108,7 @@ impl<'a, T> Drop for RefMut<'a, T> {
     }
 }
 
-impl<T, CHANNEL> Buffer<T, CHANNEL> {
+impl<T, STREAM> Buffer<T, STREAM> {
     /// Creates a new buffer
     pub const fn new(data: T) -> Self {
         Buffer {
@@ -193,7 +189,7 @@ impl<T, CHANNEL> Buffer<T, CHANNEL> {
 }
 
 // FIXME these `release` methods probably want some of sort of barrier
-impl<T> Buffer<T, Dma1Channel2> {
+impl<T> Buffer<T, DmaStream2> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
         let status = self.status.get();
@@ -202,12 +198,12 @@ impl<T> Buffer<T, Dma1Channel2> {
             return Ok(());
         }
 
-        if dma1.isr.read().teif2().is_set() {
+        if dma1.lisr.read().teif2().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif2().is_set() {
+        } else if dma1.lisr.read().tcif2().bit_is_set() {
             unsafe { self.unlock(status) }
-            dma1.ifcr.write(|w| w.ctcif2().set());
-            dma1.ccr2.modify(|_, w| w.en().clear());
+            dma1.lifcr.write(|w| w.ctcif2().set_bit());
+            dma1.s1cr.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -215,7 +211,7 @@ impl<T> Buffer<T, Dma1Channel2> {
     }
 }
 
-impl<T> Buffer<T, Dma1Channel4> {
+impl<T> Buffer<T, DmaStream4> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
         let status = self.status.get();
@@ -224,12 +220,12 @@ impl<T> Buffer<T, Dma1Channel4> {
             return Ok(());
         }
 
-        if dma1.isr.read().teif4().is_set() {
+        if dma1.hisr.read().teif4().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif4().is_set() {
+        } else if dma1.hisr.read().tcif4().bit_is_set() {
             unsafe { self.unlock(status) }
-            dma1.ifcr.write(|w| w.ctcif4().set());
-            dma1.ccr4.modify(|_, w| w.en().clear());
+            dma1.hifcr.write(|w| w.ctcif4().set_bit());
+            dma1.s4cr.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -237,7 +233,7 @@ impl<T> Buffer<T, Dma1Channel4> {
     }
 }
 
-impl<T> Buffer<T, Dma1Channel5> {
+impl<T> Buffer<T, DmaStream5> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
         let status = self.status.get();
@@ -246,12 +242,12 @@ impl<T> Buffer<T, Dma1Channel5> {
             return Ok(());
         }
 
-        if dma1.isr.read().teif5().is_set() {
+        if dma1.hisr.read().teif5().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif5().is_set() {
+        } else if dma1.hisr.read().tcif5().bit_is_set() {
             unsafe { self.unlock(status) }
-            dma1.ifcr.write(|w| w.ctcif5().set());
-            dma1.ccr5.modify(|_, w| w.en().clear());
+            dma1.hifcr.write(|w| w.ctcif5().set_bit());
+            dma1.s5cr.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -259,18 +255,18 @@ impl<T> Buffer<T, Dma1Channel5> {
     }
 }
 
-/// A circular buffer associated to a DMA `CHANNEL`
-pub struct CircBuffer<T, B, CHANNEL>
+/// A circular buffer associated to a DMA `STREAM`
+pub struct CircBuffer<T, B, STREAM>
 where
     B: Unsize<[T]>,
 {
-    _marker: PhantomData<CHANNEL>,
+    _marker: PhantomData<STREAM>,
     _t: PhantomData<[T]>,
     buffer: UnsafeCell<[B; 2]>,
     status: Cell<CircStatus>,
 }
 
-impl<T, B, CHANNEL> CircBuffer<T, B, CHANNEL>
+impl<T, B, STREAM> CircBuffer<T, B, STREAM>
 where
     B: Unsize<[T]>,
 {
@@ -293,7 +289,7 @@ enum CircStatus {
     MutatingSecondHalf,
 }
 
-impl<T, B> CircBuffer<T, B, Dma1Channel1>
+impl<T, B> CircBuffer<T, B, DmaStream1>
 where
     B: Unsize<[T]>,
     T: Atomic,
@@ -315,17 +311,17 @@ where
 
         assert_ne!(status, CircStatus::Free);
 
-        let isr = dma1.isr.read();
+        let isr = dma1.lisr.read();
 
-        if isr.teif1().is_set() {
+        if isr.teif1().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
         } else {
             match status {
                 CircStatus::MutatingFirstHalf => {
-                    if isr.tcif1().is_set() {
+                    if isr.tcif1().bit_is_set() {
                         Err(nb::Error::Other(Error::Overrun))
-                    } else if isr.htif1().is_set() {
-                        dma1.ifcr.write(|w| w.chtif1().set());
+                    } else if isr.htif1().bit_is_set() {
+                        dma1.lifcr.write(|w| w.chtif1().set_bit());
 
                         self.status.set(CircStatus::MutatingSecondHalf);
 
@@ -341,10 +337,10 @@ where
                     }
                 }
                 CircStatus::MutatingSecondHalf => {
-                    if isr.htif1().is_set() {
+                    if isr.htif1().bit_is_set() {
                         Err(nb::Error::Other(Error::Overrun))
-                    } else if isr.tcif1().is_set() {
-                        dma1.ifcr.write(|w| w.ctcif1().set());
+                    } else if isr.tcif1().bit_is_set() {
+                        dma1.lifcr.write(|w| w.ctcif1().set_bit());
 
                         self.status.set(CircStatus::MutatingFirstHalf);
 
