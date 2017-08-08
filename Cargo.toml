@@ -1,31 +1,41 @@
 [package]
-authors = ["Jorge Aparicio <jorge@japaric.io>"]
+authors = ["Nikhil K <nikhilkalige@gmail.com"]
 categories = ["asynchronous", "embedded", "hardware-support", "no-std"]
-description = "Board Support Crate for the Blue Pill"
+description = "Board Support Crate for STM32F411"
 keywords = ["arm", "cortex-m", "stm32"]
-license = "MIT OR Apache-2.0"
+license = "MIT"
 name = "bsp"
-repository = "https://github.com/japaric/blue-pill"
+repository = "https://github.com/nikhilkalige/bsp"
 version = "0.1.0"
 
 [dependencies]
-static-ref = "0.1.0"
+static-ref = "0.2.0"
 volatile-register = "0.2.0"
 
 [dependencies.cast]
 default-features = false
 version = "0.2.2"
 
-[dependencies.either]
-default-features = false
-version = "1.1.0"
-
 [dependencies.stm32f411]
-optional = false
+features = ["rt"]
 path = "../stm32f411/"
 
 [dependencies.embedded-hal]
 git = "https://github.com/japaric/embedded-hal"
+rev = "7d904f515d15fd5fe7ea34e18820ea83e2651fa2"
 
 [dependencies.nb]
 git = "https://github.com/japaric/nb"
+
+[dev-dependencies]
+cortex-m = "0.3.0"
+cortex-m-rtfm = "0.2.0"
+cortex-m-semihosting = "0.2.0"
+
+[dev-dependencies.cortex-m-rt]
+features = ["abort-on-panic"]
+version = "0.3.5"
+
+[profile.release]
+debug = true
+lto = true
