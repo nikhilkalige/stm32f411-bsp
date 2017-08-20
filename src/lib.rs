@@ -11,42 +11,34 @@
 //! [i]: https://docs.rs/cortex-m-quickstart/0.1.8/cortex_m_quickstart/
 
 #![allow(missing_docs)]
-#![deny(warnings)]
+// #![deny(warnings)]
 #![feature(const_fn)]
 #![feature(get_type_id)]
 #![feature(never_type)]
-// #![feature(unsize)]
+#![feature(unsize)]
 #![no_std]
 
 extern crate cast;
-extern crate either;
 extern crate embedded_hal as hal;
 extern crate nb;
 extern crate static_ref;
-extern crate volatile_register;
 
 pub extern crate stm32f411;
-/*
-pub mod adc;
-pub mod capture;
-pub mod dma;*/
-// pub mod gpio;
-pub mod led;
-pub mod dma;
-/*pub mod pwm;
-pub mod qei;
-pub mod serial;*/
-pub mod spi;
+
+pub mod spi2;
+pub mod dma2;
 pub mod time;
-pub mod timer;
+/*pub mod led;
+pub mod spi2;
+pub mod timer;*/
 
 /*pub use capture::Capture;
 pub use pwm::Pwm;
 pub use qei::Qei;
 pub use serial::Serial;
 pub use spi::Spi;*/
-pub use timer::{Channel, Timer};
-
+/*pub use timer::{Channel, Timer};
+*/
 macro_rules! frequency {
     ($FREQUENCY:expr) => {
         use time::*;
@@ -119,15 +111,15 @@ macro_rules! frequency {
 
 /// Advance High-performance Bus (AHB)
 pub mod ahb {
-    frequency!(8_000_000);
+    frequency!(16_000_000);
 }
 
 /// Advance Peripheral Bus 1 (APB1)
 pub mod apb1 {
-    frequency!(8_000_000);
+    frequency!(16_000_000);
 }
 
 /// Advance Peripheral Bus 2 (APB2)
 pub mod apb2 {
-    frequency!(8_000_000);
+    frequency!(16_000_000);
 }

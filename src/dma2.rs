@@ -31,7 +31,7 @@ unsafe impl DMA for DMA1 {
     }
 }
 
-pub struct DMAInstance<'a, U>
+pub struct Dma<'a, U>
     where U: Any + DMA
 {
     pub reg: &'a U,
@@ -48,9 +48,13 @@ impl<'a, U> Clone for DMAInstance<'a, U>
 */
 // impl<'a, U> Copy for DMAInstance<'a, U> where U: Any + DMA {}
 
-impl<'a, U> DMAInstance<'a, U>
+impl<'a, U> Dma<'a, U>
     where U: Any + DMA
 {
+    pub fn new(reg: &'a U, stream: DMAStream) -> Dma<U> {
+        Dma {reg: reg, stream: stream}
+    }
+
     pub fn init(& mut self, stream: DMAStream) {
         self.stream = stream;
     }
@@ -63,7 +67,7 @@ impl<'a, U> DMAInstance<'a, U>
             _ => {}
         }
     }
-    
+
     pub fn direction(&self, direction: dma2::s0cr::DIRW) {
         match self.stream {
             DMAStream::Stream0 => {

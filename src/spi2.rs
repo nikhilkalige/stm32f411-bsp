@@ -13,7 +13,7 @@ use nb;
 use stm32f411::{DMA1, GPIOA, GPIOB, GPIOC, RCC, SPI1, SPI2, i2s2ext};
 
 //use dma::{self, Buffer, DmaStream1, DmaStream2};
-use dma2::{self, DMAInstance, DMA};
+use dma2::{self, DMA};
 
 /// SPI instance that can be used with the `Spi` abstraction
 pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
@@ -95,6 +95,10 @@ impl<'a, S, D> Spi<'a, S, D>
     where S: Any + SPI,
           D: Any + DMA
 {
+    pub fn new(reg: &'a S, role: Role, dmarx: Option<&'a D>, dmatx: Option<&'a D>) -> Spi<'a, S, D> {
+        Spi {reg: reg, role: role, dmarx:dmarx, dmatx:dmatx}
+    }
+
     pub fn init(&mut self, role: Role) {
         self.role = role;
         self.reg.cr1.modify(|_, w| w.mstr().variant(self.role));
@@ -154,11 +158,6 @@ impl<'a, S, D> Spi<'a, S, D>
         } else {
             self.reg.cr1.write(|w| w.crcen().clear_bit());
         }
-    }
-
-    pub fn setup_dma(&mut self, dmarx: Option<&'a D>, dmatx: Option<&'a D>) {
-        self.dmarx = dmarx.or(self.dmarx);
-        self.dmatx = dmatx.or(self.dmatx);
     }
 }
 

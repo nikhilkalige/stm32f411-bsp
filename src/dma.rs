@@ -1,12 +1,11 @@
 //! Direct Memory Access (DMA)
 
 use core::cell::{Cell, UnsafeCell};
-use core::marker::{PhantomData, Unsize};
-use core::{ops, slice};
+use core::marker::PhantomData;
+use core::ops;
 
 use nb;
-use stm32f411::DMA1;
-use volatile_register::RO;
+use stm32f103xx::DMA1;
 
 /// DMA error
 #[derive(Debug)]
@@ -21,34 +20,43 @@ pub enum Error {
 }
 
 /// Channel 1 of DMA1
-pub struct DmaStream1 {
+pub struct Dma1Channel1 {
+    _0: (),
 }
 
 /// Channel 2 of DMA1
-pub struct DmaStream2 {
+pub struct Dma1Channel2 {
+    _0: (),
 }
 
 /// Channel 4 of DMA1
-pub struct DmaStream4 {
+pub struct Dma1Channel4 {
+    _0: (),
 }
 
 /// Channel 5 of DMA1
-pub struct DmaStream5 {
+pub struct Dma1Channel5 {
+    _0: (),
 }
 
-/// Buffer to be used with a certain DMA `STREAM`
-pub struct Buffer<T, STREAM> {
-    _marker: PhantomData<STREAM>,
+/// Buffer to be used with a certain DMA `CHANNEL`
+// NOTE(packed) workaround for rust-lang/rust#41315
+#[repr(packed)]
+pub struct Buffer<T, CHANNEL> {
     data: UnsafeCell<T>,
     flag: Cell<BorrowFlag>,
-    status: Cell<Status>,
+    state: Cell<State>,
+    _marker: PhantomData<CHANNEL>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Status {
+enum State {
+    // A new `Buffer` starts in this state. We set it to zero to place this
+    // buffer in the .bss section
+    Unlocked = 0,
+
     Locked,
     MutLocked,
-    Unlocked,
 }
 
 type BorrowFlag = usize;
@@ -58,8 +66,7 @@ const WRITING: BorrowFlag = !0;
 
 /// Wraps a borrowed reference to a value in a `Buffer`
 pub struct Ref<'a, T>
-where
-    T: 'a,
+    where T: 'a
 {
     data: &'a T,
     flag: &'a Cell<BorrowFlag>,
@@ -81,8 +88,7 @@ impl<'a, T> Drop for Ref<'a, T> {
 
 /// A wrapper type for a mutably borrowed value from a `Buffer``
 pub struct RefMut<'a, T>
-where
-    T: 'a,
+    where T: 'a
 {
     data: &'a mut T,
     flag: &'a Cell<BorrowFlag>,
@@ -108,14 +114,14 @@ impl<'a, T> Drop for RefMut<'a, T> {
     }
 }
 
-impl<T, STREAM> Buffer<T, STREAM> {
+impl<T, CHANNEL> Buffer<T, CHANNEL> {
     /// Creates a new buffer
     pub const fn new(data: T) -> Self {
         Buffer {
             _marker: PhantomData,
             data: UnsafeCell::new(data),
             flag: Cell::new(0),
-            status: Cell::new(Status::Unlocked),
+            state: Cell::new(State::Unlocked),
         }
     }
 
@@ -158,52 +164,52 @@ impl<T, STREAM> Buffer<T, STREAM> {
     }
 
     pub(crate) fn lock(&self) -> &T {
-        assert_eq!(self.status.get(), Status::Unlocked);
+        assert_eq!(self.state.get(), State::Unlocked);
         assert_ne!(self.flag.get(), WRITING);
 
         self.flag.set(self.flag.get() + 1);
-        self.status.set(Status::Locked);
+        self.state.set(State::Locked);
 
         unsafe { &*self.data.get() }
     }
 
     pub(crate) fn lock_mut(&self) -> &mut T {
-        assert_eq!(self.status.get(), Status::Unlocked);
+        assert_eq!(self.state.get(), State::Unlocked);
         assert_eq!(self.flag.get(), UNUSED);
 
         self.flag.set(WRITING);
-        self.status.set(Status::MutLocked);
+        self.state.set(State::MutLocked);
 
         unsafe { &mut *self.data.get() }
     }
 
-    unsafe fn unlock(&self, status: Status) {
-        match status {
-            Status::Locked => self.flag.set(self.flag.get() - 1),
-            Status::MutLocked => self.flag.set(UNUSED),
+    unsafe fn unlock(&self, state: State) {
+        match state {
+            State::Locked => self.flag.set(self.flag.get() - 1),
+            State::MutLocked => self.flag.set(UNUSED),
             _ => { /* unreachable!() */ }
         }
 
-        self.status.set(Status::Unlocked);
+        self.state.set(State::Unlocked);
     }
 }
 
 // FIXME these `release` methods probably want some of sort of barrier
-impl<T> Buffer<T, DmaStream2> {
+impl<T> Buffer<T, Dma1Channel2> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let status = self.status.get();
+        let state = self.state.get();
 
-        if status == Status::Unlocked {
+        if state == State::Unlocked {
             return Ok(());
         }
 
-        if dma1.lisr.read().teif2().bit_is_set() {
+        if dma1.isr.read().teif2().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.lisr.read().tcif2().bit_is_set() {
-            unsafe { self.unlock(status) }
-            dma1.lifcr.write(|w| w.ctcif2().set_bit());
-            dma1.s1cr.modify(|_, w| w.en().clear_bit());
+        } else if dma1.isr.read().tcif2().bit_is_set() {
+            unsafe { self.unlock(state) }
+            dma1.ifcr.write(|w| w.ctcif2().set_bit());
+            dma1.ccr2.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -211,21 +217,21 @@ impl<T> Buffer<T, DmaStream2> {
     }
 }
 
-impl<T> Buffer<T, DmaStream4> {
+impl<T> Buffer<T, Dma1Channel4> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let status = self.status.get();
+        let state = self.state.get();
 
-        if status == Status::Unlocked {
+        if state == State::Unlocked {
             return Ok(());
         }
 
-        if dma1.hisr.read().teif4().bit_is_set() {
+        if dma1.isr.read().teif4().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.hisr.read().tcif4().bit_is_set() {
-            unsafe { self.unlock(status) }
-            dma1.hifcr.write(|w| w.ctcif4().set_bit());
-            dma1.s4cr.modify(|_, w| w.en().clear_bit());
+        } else if dma1.isr.read().tcif4().bit_is_set() {
+            unsafe { self.unlock(state) }
+            dma1.ifcr.write(|w| w.ctcif4().set_bit());
+            dma1.ccr4.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -233,21 +239,21 @@ impl<T> Buffer<T, DmaStream4> {
     }
 }
 
-impl<T> Buffer<T, DmaStream5> {
+impl<T> Buffer<T, Dma1Channel5> {
     /// Waits until the DMA releases this buffer
     pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let status = self.status.get();
+        let state = self.state.get();
 
-        if status == Status::Unlocked {
+        if state == State::Unlocked {
             return Ok(());
         }
 
-        if dma1.hisr.read().teif5().bit_is_set() {
+        if dma1.isr.read().teif5().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.hisr.read().tcif5().bit_is_set() {
-            unsafe { self.unlock(status) }
-            dma1.hifcr.write(|w| w.ctcif5().set_bit());
-            dma1.s5cr.modify(|_, w| w.en().clear_bit());
+        } else if dma1.isr.read().tcif5().bit_is_set() {
+            unsafe { self.unlock(state) }
+            dma1.ifcr.write(|w| w.ctcif5().set_bit());
+            dma1.ccr5.modify(|_, w| w.en().clear_bit());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
@@ -255,32 +261,25 @@ impl<T> Buffer<T, DmaStream5> {
     }
 }
 
-/// A circular buffer associated to a DMA `STREAM`
-pub struct CircBuffer<T, B, STREAM>
-where
-    B: Unsize<[T]>,
-{
-    _marker: PhantomData<STREAM>,
-    _t: PhantomData<[T]>,
+/// A circular buffer associated to a DMA `CHANNEL`
+pub struct CircBuffer<B, CHANNEL> {
+    _marker: PhantomData<CHANNEL>,
     buffer: UnsafeCell<[B; 2]>,
-    status: Cell<CircStatus>,
+    state: Cell<CircState>,
 }
 
-impl<T, B, STREAM> CircBuffer<T, B, STREAM>
-where
-    B: Unsize<[T]>,
-{
+impl<B, CHANNEL> CircBuffer<B, CHANNEL> {
     pub(crate) fn lock(&self) -> &[B; 2] {
-        assert_eq!(self.status.get(), CircStatus::Free);
+        assert_eq!(self.state.get(), CircState::Free);
 
-        self.status.set(CircStatus::MutatingFirstHalf);
+        self.state.set(CircState::MutatingFirstHalf);
 
         unsafe { &*self.buffer.get() }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CircStatus {
+enum CircState {
     /// Not in use by the DMA
     Free,
     /// The DMA is mutating the first half of the buffer
@@ -289,67 +288,64 @@ enum CircStatus {
     MutatingSecondHalf,
 }
 
-impl<T, B> CircBuffer<T, B, DmaStream1>
-where
-    B: Unsize<[T]>,
-    T: Atomic,
-{
+impl<B> CircBuffer<B, Dma1Channel1> {
     /// Constructs a circular buffer from two halves
     pub const fn new(buffer: [B; 2]) -> Self {
         CircBuffer {
-            _t: PhantomData,
             _marker: PhantomData,
             buffer: UnsafeCell::new(buffer),
-            status: Cell::new(CircStatus::Free),
+            state: Cell::new(CircState::Free),
         }
     }
 
     /// Yields read access to the half of the circular buffer that's not
     /// currently being mutated by the DMA
-    pub fn read(&self, dma1: &DMA1) -> nb::Result<&[RO<T>], Error> {
-        let status = self.status.get();
+    pub fn read<R, F>(&self, dma1: &DMA1, f: F) -> nb::Result<R, Error>
+        where F: FnOnce(&B) -> R
+    {
+        let state = self.state.get();
 
-        assert_ne!(status, CircStatus::Free);
+        assert_ne!(state, CircState::Free);
 
-        let isr = dma1.lisr.read();
+        let isr = dma1.isr.read();
 
         if isr.teif1().bit_is_set() {
             Err(nb::Error::Other(Error::Transfer))
         } else {
-            match status {
-                CircStatus::MutatingFirstHalf => {
+            match state {
+                CircState::MutatingFirstHalf => {
                     if isr.tcif1().bit_is_set() {
                         Err(nb::Error::Other(Error::Overrun))
                     } else if isr.htif1().bit_is_set() {
-                        dma1.lifcr.write(|w| w.chtif1().set_bit());
+                        dma1.ifcr.write(|w| w.chtif1().set_bit());
 
-                        self.status.set(CircStatus::MutatingSecondHalf);
+                        self.state.set(CircState::MutatingSecondHalf);
 
-                        unsafe {
-                            let half: &[T] = &(*self.buffer.get())[0];
-                            Ok(slice::from_raw_parts(
-                                half.as_ptr() as *const _,
-                                half.len(),
-                            ))
+                        let ret = f(unsafe { &(*self.buffer.get())[0] });
+
+                        if isr.tcif1().bit_is_set() {
+                            Err(nb::Error::Other(Error::Overrun))
+                        } else {
+                            Ok(ret)
                         }
                     } else {
                         Err(nb::Error::WouldBlock)
                     }
                 }
-                CircStatus::MutatingSecondHalf => {
+                CircState::MutatingSecondHalf => {
                     if isr.htif1().bit_is_set() {
                         Err(nb::Error::Other(Error::Overrun))
                     } else if isr.tcif1().bit_is_set() {
-                        dma1.lifcr.write(|w| w.ctcif1().set_bit());
+                        dma1.ifcr.write(|w| w.ctcif1().set_bit());
 
-                        self.status.set(CircStatus::MutatingFirstHalf);
+                        self.state.set(CircState::MutatingFirstHalf);
 
-                        unsafe {
-                            let half: &[T] = &(*self.buffer.get())[1];
-                            Ok(slice::from_raw_parts(
-                                half.as_ptr() as *const _,
-                                half.len(),
-                            ))
+                        let ret = f(unsafe { &(*self.buffer.get())[1] });
+
+                        if isr.htif1().bit_is_set() {
+                            Err(nb::Error::Other(Error::Overrun))
+                        } else {
+                            Ok(ret)
                         }
                     } else {
                         Err(nb::Error::WouldBlock)
@@ -360,10 +356,3 @@ where
         }
     }
 }
-
-/// Values that can be atomically read
-pub trait Atomic: Copy {}
-
-impl Atomic for u8 {}
-impl Atomic for u16 {}
-impl Atomic for u32 {}
