@@ -22,13 +22,9 @@ pub enum DMAStream {
 
 
 pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
-    fn init(&self, stream: DMAStream);
 }
 
 unsafe impl DMA for DMA1 {
-    fn init(&self, stream: DMAStream) {
-
-    }
 }
 
 pub struct Dma<'a, U>

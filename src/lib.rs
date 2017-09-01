@@ -28,6 +28,7 @@ pub extern crate stm32f411;
 pub mod spi2;
 pub mod dma2;
 pub mod time;
+pub use hal::prelude;
 /*pub mod led;
 pub mod spi2;
 pub mod timer;*/
