@@ -6,14 +6,17 @@
 use core::any::Any;
 use core::ops::Deref;
 use core::ptr;
-use core::cell::Cell;
+use core::marker::Unsize;
 
+use cast::u16;
+
+use static_ref::Static;
 use hal;
 use nb;
-use stm32f411::{DMA1, GPIOA, GPIOB, GPIOC, RCC, SPI1, SPI2, i2s2ext};
+use stm32f411::{SPI1, SPI2, i2s2ext};
 
 //use dma::{self, Buffer, DmaStream1, DmaStream2};
-use dma2::{self, DMA, Dma};
+use dma2::{self, DMA, Dma, Buffer, DMAStream};
 
 /// SPI instance that can be used with the `Spi` abstraction
 pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
@@ -64,9 +67,9 @@ pub use stm32f411::i2s2ext::cr1::BRW as BaudRatePreScale;
 pub use stm32f411::i2s2ext::cr1::MSTRW as Role;
 
 pub enum NSS {
-    SOFT,
-    HARD_INPUT,
-    HARD_OUTPUT,
+    Soft,
+    HardInput,
+    HardOutput,
 }
 
 /// Serial Peripheral Interface
@@ -127,9 +130,9 @@ impl<'a, S, D> Spi<'a, S, D>
 
     pub fn nss(&self, nss: NSS) {
         match nss {
-            NSS::HARD_INPUT => self.reg.cr1.modify(|_, w| w.ssm().clear_bit()),
-            NSS::HARD_OUTPUT => self.reg.cr2.modify(|_, w| w.ssoe().set_bit()),
-            NSS::SOFT => self.reg.cr1.modify(|_, w| w.ssm().set_bit()),
+            NSS::HardInput => self.reg.cr1.modify(|_, w| w.ssm().clear_bit()),
+            NSS::HardOutput => self.reg.cr2.modify(|_, w| w.ssoe().set_bit()),
+            NSS::Soft => self.reg.cr1.modify(|_, w| w.ssm().set_bit()),
         }
     }
 
@@ -167,6 +170,28 @@ impl<'a, S, D> Spi<'a, S, D>
 
     pub fn disable(&self) {
         self.reg.cr1.modify(|_, w| w.spe().clear_bit())
+    }
+
+    pub fn send_dma<B, STREAM>(&self, buffer: &Static<Buffer<B, STREAM>>)
+        -> ::core::result::Result<(), dma2::Error>
+    where B: Unsize<[u8]>
+    {
+        let spi = self.reg;
+        let dma = self.dmatx.unwrap();
+        
+        if dma.is_enabled() {
+            return Err(dma2::Error::InUse)
+        }
+
+        let buffer: &[u8] = buffer.lock();
+        dma.set_config(
+            buffer.as_ptr() as u32,
+            &spi.dr as *const _ as u32,
+            u16(buffer.len()).unwrap()
+        );
+
+        dma.enable();
+        Ok(())
     }
 }
 
