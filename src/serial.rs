@@ -192,6 +192,7 @@ where
         self.write(string.as_bytes())
     }
 }
+
 /*
 impl<'a> Serial<'a, USART1> {
     /// Starts a DMA transfer to receive serial data into a `buffer`

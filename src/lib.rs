@@ -16,19 +16,33 @@
 #![feature(get_type_id)]
 #![feature(never_type)]
 #![feature(unsize)]
+#![feature(fixed_size_array)]
 #![no_std]
 
 extern crate cast;
 extern crate embedded_hal as hal;
+#[macro_use]
 extern crate nb;
 extern crate static_ref;
+extern crate heapless;
+extern crate generic_array;
+extern crate cortex_m;
+extern crate cortex_m_semihosting as semihosting;
 
 pub extern crate stm32f411;
 
 pub mod spi2;
 pub mod dma2;
+pub mod pwm2;
 pub mod time;
+pub mod timer;
+pub mod delay;
+pub mod gpio;
+pub mod tlc5955;
+pub mod serial;
 pub use hal::prelude;
+
+pub use timer::{Timer};
 /*pub mod led;
 pub mod spi2;
 pub mod timer;*/
@@ -123,4 +137,8 @@ pub mod apb1 {
 /// Advance Peripheral Bus 2 (APB2)
 pub mod apb2 {
     frequency!(16_000_000);
+}
+
+pub mod sysclk {
+    frequency!(::ahb::FREQUENCY / 8);
 }

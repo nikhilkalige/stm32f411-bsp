@@ -13,7 +13,7 @@ use cast::u16;
 use static_ref::Static;
 use hal;
 use nb;
-use stm32f411::{SPI1, SPI2, i2s2ext};
+use stm32f411::{SPI1, SPI4, i2s2ext};
 
 //use dma::{self, Buffer, DmaStream1, DmaStream2};
 use dma2::{self, DMA, Dma, Buffer, DMAStream};
@@ -26,6 +26,9 @@ pub unsafe trait SPI: Deref<Target = i2s2ext::RegisterBlock> {
 }
 
 unsafe impl SPI for SPI1 {
+}
+
+unsafe impl SPI for SPI4 {
 }
 
 /// SPI result
@@ -132,7 +135,10 @@ impl<'a, S, D> Spi<'a, S, D>
         match nss {
             NSS::HardInput => self.reg.cr1.modify(|_, w| w.ssm().clear_bit()),
             NSS::HardOutput => self.reg.cr2.modify(|_, w| w.ssoe().set_bit()),
-            NSS::Soft => self.reg.cr1.modify(|_, w| w.ssm().set_bit()),
+            NSS::Soft => {
+                self.reg.cr1.modify(|_, w| w.ssm().set_bit());
+                self.reg.cr2.modify(|_, w| w.ssoe().set_bit());
+            }
         }
     }
 
@@ -172,13 +178,13 @@ impl<'a, S, D> Spi<'a, S, D>
         self.reg.cr1.modify(|_, w| w.spe().clear_bit())
     }
 
-    pub fn send_dma<B, STREAM>(&self, buffer: &Static<Buffer<B, STREAM>>)
+    pub fn send_dma<B>(&self, buffer: &Static<Buffer<B>>)
         -> ::core::result::Result<(), dma2::Error>
     where B: Unsize<[u8]>
     {
         let spi = self.reg;
         let dma = self.dmatx.unwrap();
-        
+
         if dma.is_enabled() {
             return Err(dma2::Error::InUse)
         }
@@ -191,6 +197,68 @@ impl<'a, S, D> Spi<'a, S, D>
         );
 
         dma.enable();
+        Ok(())
+    }
+
+    pub fn rxtx_dma<B>(&self,
+        tx_buffer: &Static<Buffer<B>>,
+        rx_buffer: &Static<Buffer<B>>)
+        -> ::core::result::Result<(), dma2::Error>
+    where B: Unsize<[u8]>
+    {
+        let spi = self.reg;
+        let dma_tx = self.dmatx.unwrap();
+        let dma_rx = self.dmarx.unwrap();
+
+        if dma_tx.is_enabled() {
+            return Err(dma2::Error::InUse)
+        }
+
+        let _tx_buffer: &[u8] = tx_buffer.lock();
+        dma_tx.set_config(
+            _tx_buffer.as_ptr() as u32,
+            &spi.dr as *const _ as u32,
+            u16(_tx_buffer.len()).unwrap()
+        );
+
+        let _rx_buffer: &[u8] = rx_buffer.lock();
+        dma_rx.set_config(
+            &spi.dr as *const _ as u32,
+            _rx_buffer.as_ptr() as u32,
+            u16(_rx_buffer.len()).unwrap()
+        );
+
+        dma_tx.enable();
+        dma_rx.enable();
+        Ok(())
+    }
+
+    pub fn transfer<B>(&self, tx_buffer: &[B], rx_buffer: &[B])
+        -> ::core::result::Result<(), dma2::Error>
+    where B: Unsize<[u8]>
+    {
+        let spi = self.reg;
+        let dma_tx = self.dmatx.unwrap();
+        let dma_rx = self.dmarx.unwrap();
+
+        if dma_tx.is_enabled() {
+            return Err(dma2::Error::InUse)
+        }
+
+        dma_tx.set_config(
+            tx_buffer.as_ptr() as u32,
+            &spi.dr as *const _ as u32,
+            u16(tx_buffer.len()).unwrap()
+        );
+
+        dma_rx.set_config(
+            &spi.dr as *const _ as u32,
+            rx_buffer.as_ptr() as u32,
+            u16(tx_buffer.len()).unwrap()
+        );
+
+        dma_tx.enable();
+        dma_rx.enable();
         Ok(())
     }
 }

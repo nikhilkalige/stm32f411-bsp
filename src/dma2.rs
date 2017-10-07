@@ -17,14 +17,16 @@ pub use stm32f411::dma2::scr::PLW as Priority;
 pub use stm32f411::dma2::scr::MSIZEW as DataSize;
 
 pub struct DMA1Stream0();
+pub struct DMA2Stream1();
+pub struct DMA2Stream4();
 
 #[derive(Copy, Clone)]
 pub enum DMAStream {
     Stream0,
     Stream1,
     Stream2,
-    // Stream3,
-    // Stream4,
+    Stream3,
+    Stream4,
     // Stream5,
     // Stream6,
     // Stream7,
@@ -65,6 +67,8 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0cr,
             DMAStream::Stream1 => &self.s1cr,
             DMAStream::Stream2 => &self.s2cr,
+            DMAStream::Stream3 => &self.s3cr,
+            DMAStream::Stream4 => &self.s4cr,
         }
     }
 
@@ -73,6 +77,8 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0ndtr,
             DMAStream::Stream1 => &self.s1ndtr,
             DMAStream::Stream2 => &self.s2ndtr,
+            DMAStream::Stream3 => &self.s3ndtr,
+            DMAStream::Stream4 => &self.s4ndtr,
         }
     }
 
@@ -81,6 +87,8 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0par,
             DMAStream::Stream1 => &self.s1par,
             DMAStream::Stream2 => &self.s2par,
+            DMAStream::Stream3 => &self.s3par,
+            DMAStream::Stream4 => &self.s4par,
         }
     }
 
@@ -89,6 +97,8 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0m0ar,
             DMAStream::Stream1 => &self.s1m0ar,
             DMAStream::Stream2 => &self.s2m0ar,
+            DMAStream::Stream3 => &self.s3m0ar,
+            DMAStream::Stream4 => &self.s4m0ar,
         }
     }
 
@@ -97,6 +107,8 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0m1ar,
             DMAStream::Stream1 => &self.s1m1ar,
             DMAStream::Stream2 => &self.s2m1ar,
+            DMAStream::Stream3 => &self.s3m1ar,
+            DMAStream::Stream4 => &self.s4m1ar,
         }
     }
 
@@ -105,10 +117,10 @@ pub unsafe trait DMA: Deref<Target = dma2::RegisterBlock> {
             DMAStream::Stream0 => &self.s0fcr,
             DMAStream::Stream1 => &self.s1fcr,
             DMAStream::Stream2 => &self.s2fcr,
+            DMAStream::Stream3 => &self.s3fcr,
+            DMAStream::Stream4 => &self.s4fcr,
         }
     }
-
-
 }
 
 unsafe impl DMA for DMA1 {}
@@ -318,18 +330,18 @@ impl<'a, T> Drop for RefMut<'a, T> {
 /// Buffer to be used with a certain DMA `CHANNEL`
 // NOTE(packed) workaround for rust-lang/rust#41315
 #[repr(packed)]
-pub struct Buffer<T, STREAM> {
+pub struct Buffer<T> {
     data: UnsafeCell<T>,
     flag: Cell<BorrowFlag>,
     state: Cell<State>,
-    _marker: PhantomData<STREAM>,
+    stream: DMAStream,
 }
 
-impl<T, STREAM> Buffer<T, STREAM> {
+impl<T> Buffer<T> {
     /// Creates a new buffer
-    pub const fn new(data: T) -> Self {
+    pub const fn new(data: T, stream: DMAStream) -> Self {
         Buffer {
-            _marker: PhantomData,
+            stream: stream,
             data: UnsafeCell::new(data),
             state: Cell::new(State::Unlocked),
             flag: Cell::new(0),
@@ -404,14 +416,14 @@ impl<T, STREAM> Buffer<T, STREAM> {
 
     // FIXME these `release` methods probably want some of sort of barrier
     /// Waits until the DMA releases this buffer
-    pub fn release(&self, dma: &DMA2, stream: DMAStream) -> nb::Result<(), Error> {
+    pub fn release<D:DMA>(&self, dma: &D) -> nb::Result<(), Error> {
         let state = self.state.get();
 
         if state == State::Unlocked {
             return Ok(());
         }
 
-        let dma_status = match stream {
+        let dma_status = match self.stream {
             DMAStream::Stream0 => (
                 dma.lisr.read().teif0().bit_is_set(),
                 dma.lisr.read().tcif0().bit_is_set(),
@@ -424,19 +436,29 @@ impl<T, STREAM> Buffer<T, STREAM> {
                 dma.lisr.read().teif2().bit_is_set(),
                 dma.lisr.read().tcif2().bit_is_set(),
             ),
+            DMAStream::Stream3 => (
+                dma.lisr.read().teif3().bit_is_set(),
+                dma.lisr.read().tcif3().bit_is_set(),
+            ),
+            DMAStream::Stream4 => (
+                dma.hisr.read().teif4().bit_is_set(),
+                dma.hisr.read().tcif4().bit_is_set(),
+            ),
         };
 
         if dma_status.0 {
             return Err(nb::Error::Other(Error::Transfer));
         } else if dma_status.1 {
             unsafe { self.unlock(state) }
-            match stream {
+            match self.stream {
                 DMAStream::Stream0 => dma.lifcr.write(|w| w.ctcif0().set_bit()),
                 DMAStream::Stream1 => dma.lifcr.write(|w| w.ctcif1().set_bit()),
                 DMAStream::Stream2 => dma.lifcr.write(|w| w.ctcif2().set_bit()),
+                DMAStream::Stream3 => dma.lifcr.write(|w| w.ctcif3().set_bit()),
+                DMAStream::Stream4 => dma.lifcr.write(|w| w.ctcif2().set_bit()),
             }
 
-            dma.scr(stream).modify(|_, w| w.en().disable());
+            dma.scr(self.stream).modify(|_, w| w.en().disable());
             Ok(())
         } else {
             Err(nb::Error::WouldBlock)
