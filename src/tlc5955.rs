@@ -82,7 +82,6 @@ impl TLC5955 {
         clear_buffer(&mut *tx_buffer.borrow_mut());
         interface.debug("Read data after zeros.\n");
         self.send_data(true, tx_buffer, rx_buffer, interface);
-        shift_buffer_by_7(&mut *rx_buffer.borrow_mut());
 
         self.fill_control_data(&mut *tx_buffer.borrow_mut());
         if !compare_buffers(&*tx_buffer.borrow(), &*rx_buffer.borrow()) {
@@ -97,14 +96,14 @@ impl TLC5955 {
         clear_buffer(&mut *tx_buffer.borrow_mut());
         {
             let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
-            buffer[72] = 255;
-            buffer[70] = 150;
-            buffer[68] = 210;
+            buffer[71] = 255;
+            buffer[69] = 150;
+            buffer[67] = 210;
         }
 
         interface.debug("Load GS Data\n");
         interface.dump_buffer(&*tx_buffer.borrow_mut());
-        self.send_data(true, tx_buffer, rx_buffer, interface);
+        self.send_data(false, tx_buffer, rx_buffer, interface);
         interface.debug("Read GS Data\n");
         interface.dump_buffer(&*rx_buffer.borrow_mut());
         loop {}
@@ -116,7 +115,7 @@ impl TLC5955 {
         interface: &I)
         where I: TLCHardwareLayer, B: Unsize<[u8]>
     {
-        /*
+        interface.delay(2000);
         interface.as_gpio();
         if is_control {
             interface.write_bit(1);
@@ -125,7 +124,6 @@ impl TLC5955 {
             interface.write_bit(0);
         }
         interface.as_spi();
-        */
         {
             let tx_buff: &mut [u8] = &mut *tx_buffer.borrow_mut();
             let rx_buff: &mut [u8] = &mut *rx_buffer.borrow_mut();
@@ -219,7 +217,7 @@ impl TLC5955 {
         }
         pos = add_bits(buffer, 0x0B as u32, 5, pos);
         pos = 760;
-        add_bits(buffer, 0x196 as u32, 9, pos);
+        add_bits(buffer, 0x96 as u32, 8, pos);
     }
 }
 
