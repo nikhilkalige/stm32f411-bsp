@@ -5,6 +5,7 @@ use static_ref::Static;
 use core::marker::Unsize;
 use semihosting::hio;
 use core::fmt::Write;
+use core::ops::DerefMut;
 use dma2::{self, DMA, Dma, Buffer, DMAStream};
 
 const CHANNELS_PER_TLC: u8 = 48;
@@ -22,6 +23,7 @@ pub trait TLCHardwareLayer {
     fn latch(&self, delay: u32);
     fn write_bit(&self, bit: u8);
     fn delay(&self, count: u16);
+    fn read_write_byte(&self, byte: u8) -> u8;
     fn write<B>(&self, tx_buffer: &Static<Buffer<B>>,
         rx_buffer: &Static<Buffer<B>>)where B: Unsize<[u8]>;
     fn wait<B>(&self, buffer: &Static<Buffer<B>>)where B: Unsize<[u8]>;
@@ -80,35 +82,24 @@ impl TLC5955 {
         clear_buffer(&mut *tx_buffer.borrow_mut());
         interface.debug("Read data after zeros.\n");
         self.send_data(true, tx_buffer, rx_buffer, interface);
+        shift_buffer_by_7(&mut *rx_buffer.borrow_mut());
 
+        self.fill_control_data(&mut *tx_buffer.borrow_mut());
         if !compare_buffers(&*tx_buffer.borrow(), &*rx_buffer.borrow()) {
             interface.debug("Ouch, read control data does not match!\n");
             interface.dump_buffer(&*rx_buffer.borrow_mut());
-            loop{
-                self.fill_control_data(&mut *tx_buffer.borrow_mut());
-        self.send_data(true, tx_buffer, rx_buffer, interface);
-            }
+            loop {}
         }
 
         // Send the control data the second time.
-        self.fill_control_data(&mut *tx_buffer.borrow_mut());
         self.send_data(true, tx_buffer, rx_buffer, interface);
 
+        clear_buffer(&mut *tx_buffer.borrow_mut());
         {
             let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
-            // let buffer_slice: &mut[u8] = buffer.lock_mut();
-            // Write some random data first 4 leds
-            for i in 0..4 {
-                // Red
-                buffer[(i*6) + 0] =  255;
-                buffer[(i*6) + 1] =  255;
-                // Green
-                buffer[(i*6) + 2] =  0;
-                buffer[(i*6) + 3] =  0;
-                // Blue
-                buffer[(i*6) + 4] =  0;
-                buffer[(i*6) + 5] =  0;
-            }
+            buffer[72] = 255;
+            buffer[70] = 150;
+            buffer[68] = 210;
         }
 
         interface.debug("Load GS Data\n");
@@ -125,6 +116,7 @@ impl TLC5955 {
         interface: &I)
         where I: TLCHardwareLayer, B: Unsize<[u8]>
     {
+        /*
         interface.as_gpio();
         if is_control {
             interface.write_bit(1);
@@ -132,11 +124,20 @@ impl TLC5955 {
         else {
             interface.write_bit(0);
         }
-
         interface.as_spi();
-        interface.write(tx_buffer, rx_buffer);
-        interface.wait(tx_buffer);
-        interface.wait(rx_buffer);
+        */
+        {
+            let tx_buff: &mut [u8] = &mut *tx_buffer.borrow_mut();
+            let rx_buff: &mut [u8] = &mut *rx_buffer.borrow_mut();
+
+            for (txb, rxb) in tx_buff.iter_mut().zip(rx_buff.iter_mut()) {
+                *rxb = interface.read_write_byte(*txb);
+            }
+        }
+
+        // interface.write(tx_buffer, rx_buffer);
+        // interface.wait(tx_buffer);
+        // interface.wait(rx_buffer);
         interface.latch(1);
     }
 
@@ -218,7 +219,7 @@ impl TLC5955 {
         }
         pos = add_bits(buffer, 0x0B as u32, 5, pos);
         pos = 760;
-        add_bits(buffer, 0x96 as u32, 8, pos);
+        add_bits(buffer, 0x196 as u32, 9, pos);
     }
 }
 
@@ -243,4 +244,13 @@ fn clear_buffer(buffer: &mut[u8]) {
 
 fn compare_buffers(buffer1: &[u8], buffer2: &[u8]) -> bool {
     buffer1.iter().eq(buffer2)
+}
+
+fn shift_buffer_by_7(buffer: &mut [u8]) {
+    let mut old: u8 = 0;
+    for index in 0..buffer.len() {
+        let mut val = buffer[index];
+        buffer[index] = old.wrapping_shl(1) | val.wrapping_shr(7);
+        old = val;
+    }
 }
