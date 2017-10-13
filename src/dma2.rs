@@ -455,7 +455,7 @@ impl<T> Buffer<T> {
                 DMAStream::Stream1 => dma.lifcr.write(|w| w.ctcif1().set_bit()),
                 DMAStream::Stream2 => dma.lifcr.write(|w| w.ctcif2().set_bit()),
                 DMAStream::Stream3 => dma.lifcr.write(|w| w.ctcif3().set_bit()),
-                DMAStream::Stream4 => dma.lifcr.write(|w| w.ctcif2().set_bit()),
+                DMAStream::Stream4 => dma.hifcr.write(|w| w.ctcif4().set_bit()),
             }
 
             dma.scr(self.stream).modify(|_, w| w.en().disable());
