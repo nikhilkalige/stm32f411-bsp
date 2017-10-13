@@ -87,7 +87,8 @@ impl TLC5955 {
         if !compare_buffers(&*tx_buffer.borrow(), &*rx_buffer.borrow()) {
             interface.debug("Ouch, read control data does not match!\n");
             interface.dump_buffer(&*rx_buffer.borrow_mut());
-            loop {}
+            loop {
+            }
         }
 
         // Send the control data the second time.
@@ -96,9 +97,11 @@ impl TLC5955 {
         clear_buffer(&mut *tx_buffer.borrow_mut());
         {
             let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
-            buffer[71] = 255;
-            buffer[69] = 150;
-            buffer[67] = 210;
+            let mut i = 0;
+            while i < buffer.len() {
+                buffer[i] = 0xFF;
+                i += 6;
+            }
         }
 
         interface.debug("Load GS Data\n");
@@ -106,7 +109,23 @@ impl TLC5955 {
         self.send_data(false, tx_buffer, rx_buffer, interface);
         interface.debug("Read GS Data\n");
         interface.dump_buffer(&*rx_buffer.borrow_mut());
-        loop {}
+
+        let mut count:u8 = 0;
+        loop {
+            clear_buffer(&mut *tx_buffer.borrow_mut());
+            {
+                let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
+                let mut i = 0;
+                let inc: usize = (count as usize) % 6;
+                while i < buffer.len() {
+                    buffer[i + inc] = 0xFF;
+                    i += 6;
+                }
+            }
+            interface.delay(100);
+            self.send_data(false, tx_buffer, rx_buffer, interface);
+            count = count.wrapping_add(1);
+        }
     }
 
     pub fn send_data<B, I>(&self, is_control: bool,
@@ -115,7 +134,7 @@ impl TLC5955 {
         interface: &I)
         where I: TLCHardwareLayer, B: Unsize<[u8]>
     {
-        interface.delay(2000);
+        // interface.delay(2000);
         interface.as_gpio();
         if is_control {
             interface.write_bit(1);
@@ -124,18 +143,18 @@ impl TLC5955 {
             interface.write_bit(0);
         }
         interface.as_spi();
-        {
-            let tx_buff: &mut [u8] = &mut *tx_buffer.borrow_mut();
-            let rx_buff: &mut [u8] = &mut *rx_buffer.borrow_mut();
+        // {
+        //     let tx_buff: &mut [u8] = &mut *tx_buffer.borrow_mut();
+        //     let rx_buff: &mut [u8] = &mut *rx_buffer.borrow_mut();
 
-            for (txb, rxb) in tx_buff.iter_mut().zip(rx_buff.iter_mut()) {
-                *rxb = interface.read_write_byte(*txb);
-            }
-        }
+        //     for (txb, rxb) in tx_buff.iter_mut().zip(rx_buff.iter_mut()) {
+        //         *rxb = interface.read_write_byte(*txb);
+        //     }
+        // }
 
-        // interface.write(tx_buffer, rx_buffer);
-        // interface.wait(tx_buffer);
-        // interface.wait(rx_buffer);
+        interface.write(tx_buffer, rx_buffer);
+        interface.wait(tx_buffer);
+        interface.wait(rx_buffer);
         interface.latch(1);
     }
 
