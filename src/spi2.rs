@@ -210,7 +210,7 @@ impl<'a, S, D> Spi<'a, S, D>
         let dma_tx = self.dmatx.unwrap();
         let dma_rx = self.dmarx.unwrap();
 
-        if dma_tx.is_enabled() {
+        if dma_tx.is_enabled() || dma_rx.is_enabled() {
             return Err(dma2::Error::InUse)
         }
 
@@ -228,8 +228,8 @@ impl<'a, S, D> Spi<'a, S, D>
             u16(_rx_buffer.len()).unwrap()
         );
 
-        dma_tx.enable();
         dma_rx.enable();
+        dma_tx.enable();
         Ok(())
     }
 
