@@ -16,6 +16,7 @@ const MC_DATA: u8 = 5;
 const MC_BITS: u32 = 3;
 const BC_DATA: u8 = 110;
 const BC_BITS: u32 = 7;
+const NO_LED_DRIVERS: usize = 4;
 
 pub trait TLCHardwareLayer {
     fn as_gpio(&self);
@@ -24,9 +25,9 @@ pub trait TLCHardwareLayer {
     fn write_bit(&self, bit: u8);
     fn delay(&self, count: u16);
     fn read_write_byte(&self, byte: u8) -> u8;
-    fn write<B>(&self, tx_buffer: &Static<Buffer<B>>,
-        rx_buffer: &Static<Buffer<B>>)where B: Unsize<[u8]>;
-    fn wait<B>(&self, buffer: &Static<Buffer<B>>)where B: Unsize<[u8]>;
+    fn write<B>(&self, tx_buffer: &Buffer<B>,
+        rx_buffer: &Buffer<B>)where B: Unsize<[u8]>;
+    fn wait<B>(&self, buffer: &Buffer<B>)where B: Unsize<[u8]>;
     fn dump_buffer(&self, buffer: &[u8]);
     fn debug(&self, data: &str);
 }
@@ -69,59 +70,83 @@ impl TLC5955 {
     }
 
     pub fn setup<B, I>(&mut self,
-        tx_buffer: &Static<Buffer<B>>,
-        rx_buffer: &Static<Buffer<B>>,
+        tx_buffer: &Static<[Buffer<B>; NO_LED_DRIVERS]>,
+        rx_buffer: &Static<[Buffer<B>; NO_LED_DRIVERS]>,
         interface: &I)
         where I: TLCHardwareLayer, B: Unsize<[u8]>
     {
         interface.debug("Sending control register data to TLC5955\n");
-        self.fill_control_data(&mut *tx_buffer.borrow_mut());
-        interface.dump_buffer(&*tx_buffer.borrow_mut());
+        for buffer in tx_buffer.iter() {
+            self.fill_control_data(&mut *buffer.borrow_mut());
+            interface.dump_buffer(&*buffer.borrow_mut());
+        }
         self.send_data(true, tx_buffer, rx_buffer, interface);
 
-        clear_buffer(&mut *tx_buffer.borrow_mut());
+        for buffer in tx_buffer.iter() {
+            clear_buffer(&mut *buffer.borrow_mut());
+        }
         interface.debug("Read data after zeros.\n");
         self.send_data(true, tx_buffer, rx_buffer, interface);
 
-        self.fill_control_data(&mut *tx_buffer.borrow_mut());
-        if !compare_buffers(&*tx_buffer.borrow(), &*rx_buffer.borrow()) {
-            interface.debug("Ouch, read control data does not match!\n");
-            interface.dump_buffer(&*rx_buffer.borrow_mut());
-            loop {
+        for (txb, rxb) in tx_buffer.iter().zip(rx_buffer.iter()) {
+            self.fill_control_data(&mut *txb.borrow_mut());
+            if !compare_buffers(&*txb.borrow(), &*rxb.borrow()) {
+                interface.debug("Ouch, read control data does not match!\n");
+                interface.dump_buffer(&*rxb.borrow_mut());
+                //loop {
+                // }
+            } else {
+                interface.debug("Read control good.\n");
             }
         }
 
         // Send the control data the second time.
         self.send_data(true, tx_buffer, rx_buffer, interface);
 
-        clear_buffer(&mut *tx_buffer.borrow_mut());
-        {
-            let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
-            let mut i = 0;
-            while i < buffer.len() {
-                buffer[i] = 0xFF;
-                i += 6;
+        for buffer in tx_buffer.iter() {
+            clear_buffer(&mut *buffer.borrow_mut());
+            {
+                let buffer: &mut[u8] = &mut *buffer.borrow_mut();
+                let mut i = 0;
+                while i < buffer.len() {
+                    buffer[i] = 0xFF;
+                    i += 6;
+                }
             }
         }
 
         interface.debug("Load GS Data\n");
-        interface.dump_buffer(&*tx_buffer.borrow_mut());
+        for buffer in tx_buffer.iter() {
+            interface.dump_buffer(&*buffer.borrow_mut());
+        }
         self.send_data(false, tx_buffer, rx_buffer, interface);
         interface.debug("Read GS Data\n");
-        interface.dump_buffer(&*rx_buffer.borrow_mut());
+        for buffer in rx_buffer.iter() {
+            interface.dump_buffer(&*buffer.borrow_mut());
+        }
 
         let mut count:u8 = 0;
+        let mut inc: usize = 1;
         loop {
-            clear_buffer(&mut *tx_buffer.borrow_mut());
-            {
-                let buffer: &mut[u8] = &mut *tx_buffer.borrow_mut();
-                let mut i = 0;
-                let inc: usize = (count as usize) % 6;
-                while i < buffer.len() {
-                    buffer[i + inc] = 0xFF;
-                    i += 6;
+            for txb in tx_buffer.iter() {
+                clear_buffer(&mut *txb.borrow_mut());
+                {
+                    let buffer: &mut[u8] = &mut *txb.borrow_mut();
+                    let mut i = 0;
+                    // let inc: usize = (count as usize) % 6;
+                    while i < buffer.len() {
+                        buffer[i + inc] = 0xFF;
+                        i += 6;
+                    }
                 }
             }
+            inc = match(inc) {
+                1 => 3,
+                3 => 5,
+                5 => 1,
+                _ => 1
+            };
+
             interface.delay(100);
             self.send_data(false, tx_buffer, rx_buffer, interface);
             count = count.wrapping_add(1);
@@ -129,32 +154,24 @@ impl TLC5955 {
     }
 
     pub fn send_data<B, I>(&self, is_control: bool,
-        tx_buffer: &Static<Buffer<B>>,
-        rx_buffer: &Static<Buffer<B>>,
+        tx_buffer: &Static<[Buffer<B>; NO_LED_DRIVERS]>,
+        rx_buffer: &Static<[Buffer<B>; NO_LED_DRIVERS]>,
         interface: &I)
         where I: TLCHardwareLayer, B: Unsize<[u8]>
     {
-        // interface.delay(2000);
-        interface.as_gpio();
-        if is_control {
-            interface.write_bit(1);
+        for (txb, rxb) in tx_buffer.iter().zip(rx_buffer.iter()) {
+            interface.as_gpio();
+            if is_control {
+                interface.write_bit(1);
+            }
+            else {
+                interface.write_bit(0);
+            }
+            interface.as_spi();
+            interface.write(txb, rxb);
+            interface.wait(txb);
+            interface.wait(rxb);
         }
-        else {
-            interface.write_bit(0);
-        }
-        interface.as_spi();
-        // {
-        //     let tx_buff: &mut [u8] = &mut *tx_buffer.borrow_mut();
-        //     let rx_buff: &mut [u8] = &mut *rx_buffer.borrow_mut();
-
-        //     for (txb, rxb) in tx_buff.iter_mut().zip(rx_buff.iter_mut()) {
-        //         *rxb = interface.read_write_byte(*txb);
-        //     }
-        // }
-
-        interface.write(tx_buffer, rx_buffer);
-        interface.wait(tx_buffer);
-        interface.wait(rx_buffer);
         interface.latch(1);
     }
 
@@ -222,21 +239,24 @@ impl TLC5955 {
     }
 
     fn fill_control_data(&mut self, buffer: &mut[u8]) {
-        let mut pos = 0;
-        for index in 0..CHANNELS_PER_TLC {
-            pos = add_bits(buffer, DC_DATA as u32, DC_BITS, pos);
-        }
+        let chunk_size = buffer.len() / (self.no_chips as usize);
+        for chunk in buffer.chunks_mut(chunk_size) {
+            let mut pos = 0;
+            for index in 0..CHANNELS_PER_TLC {
+                pos = add_bits(chunk, DC_DATA as u32, DC_BITS, pos);
+            }
 
-        for index in 0..3 {
-            pos = add_bits(buffer, MC_DATA as u32, MC_BITS, pos);
-        }
+            for index in 0..3 {
+                pos = add_bits(chunk, MC_DATA as u32, MC_BITS, pos);
+            }
 
-        for index in 0..3 {
-            pos = add_bits(buffer, BC_DATA as u32, BC_BITS, pos);
+            for index in 0..3 {
+                pos = add_bits(chunk, BC_DATA as u32, BC_BITS, pos);
+            }
+            pos = add_bits(chunk, 0x0B as u32, 5, pos);
+            pos = 760;
+            add_bits(chunk, 0x96 as u32, 8, pos);
         }
-        pos = add_bits(buffer, 0x0B as u32, 5, pos);
-        pos = 760;
-        add_bits(buffer, 0x96 as u32, 8, pos);
     }
 }
 

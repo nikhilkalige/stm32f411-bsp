@@ -201,8 +201,8 @@ impl<'a, S, D> Spi<'a, S, D>
     }
 
     pub fn rxtx_dma<B>(&self,
-        tx_buffer: &Static<Buffer<B>>,
-        rx_buffer: &Static<Buffer<B>>)
+        tx_buffer: &Buffer<B>,
+        rx_buffer: &Buffer<B>)
         -> ::core::result::Result<(), dma2::Error>
     where B: Unsize<[u8]>
     {
