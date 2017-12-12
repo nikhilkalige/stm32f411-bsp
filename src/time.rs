@@ -1,92 +1,98 @@
 //! Units of time
 
-macro_rules! map {
-    ($Self:ident) => {
-        impl $Self {
-            /// Applies the function `f` to inner value
-            pub fn map<F>(self, f: F) -> $Self
-            where
-                F: FnOnce(u32) -> u32
-            {
-                $Self(f(self.0))
-            }
-        }
-    }
-}
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Bps(pub u32);
 
-/// `Hz^-1`
-#[derive(Clone, Copy, Debug)]
-pub struct IHertz(pub u32);
-
-impl IHertz {
-    /// Invert this quantity
-    pub fn invert(self) -> Hertz {
-        Hertz(self.0)
-    }
-}
-
-map!(IHertz);
-
-/// `Hz`
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Hertz(pub u32);
 
-impl Hertz {
-    /// Invert this quantity
-    pub fn invert(self) -> IHertz {
-        IHertz(self.0)
-    }
-}
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct KiloHertz(pub u32);
 
-map!(Hertz);
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct MegaHertz(pub u32);
 
-/// `us`
-#[derive(Clone, Copy, Debug)]
-pub struct Microseconds(pub u32);
-
-map!(Microseconds);
-
-/// `ms`
-#[derive(Clone, Copy, Debug)]
-pub struct Milliseconds(pub u32);
-
-map!(Milliseconds);
-
-/// `s`
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct Seconds(pub u32);
 
-map!(Seconds);
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct MilliSeconds(pub u32);
 
-/// `u32` extension trait
-pub trait U32Ext {
-    /// Wrap in `Hz`
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct MicroSeconds(pub u32);
+
+pub trait TimeExt {
+    fn bps(self) -> Bps;
     fn hz(self) -> Hertz;
-
-    /// Wrap in `Milliseconds`
-    fn ms(self) -> Milliseconds;
-
-    /// Wrap in `Seconds`
+    fn khz(self) -> KiloHertz;
+    fn mhz(self) -> MegaHertz;
+    fn ms(self) -> MilliSeconds;
     fn s(self) -> Seconds;
-
-    /// Wrap in `Microseconds`
-    fn us(self) -> Microseconds;
+    fn us(self) -> MicroSeconds;
 }
 
-impl U32Ext for u32 {
+impl TimeExt for u32 {
+    fn bps(self) -> Bps {
+        Bps(self)
+    }
+
     fn hz(self) -> Hertz {
         Hertz(self)
     }
 
-    fn ms(self) -> Milliseconds {
-        Milliseconds(self)
+    fn khz(self) -> KiloHertz {
+        KiloHertz(self)
+    }
+
+    fn mhz(self) -> MegaHertz {
+        MegaHertz(self)
+    }
+
+    fn ms(self) -> MilliSeconds {
+        MilliSeconds(self)
     }
 
     fn s(self) -> Seconds {
         Seconds(self)
     }
 
-    fn us(self) -> Microseconds {
-        Microseconds(self)
+    fn us(self) -> MicroSeconds {
+        MicroSeconds(self)
+    }
+}
+
+impl Into<Hertz> for KiloHertz {
+    fn into(self) -> Hertz {
+        Hertz(self.0 * 1_000)
+    }
+}
+
+impl Into<Hertz> for MegaHertz {
+    fn into(self) -> Hertz {
+        Hertz(self.0 * 1_000_000)
+    }
+}
+
+impl Into<KiloHertz> for MegaHertz {
+    fn into(self) -> KiloHertz {
+        KiloHertz(self.0 * 1_000)
+    }
+}
+
+impl Into<MicroSeconds> for MilliSeconds {
+    fn into(self) -> MicroSeconds {
+        MicroSeconds(self.0 * 1_000)
+    }
+}
+
+impl Into<MicroSeconds> for Seconds {
+    fn into(self) -> MicroSeconds {
+        MicroSeconds(self.0 * 1_000_000)
+    }
+}
+
+impl Into<MilliSeconds> for Seconds {
+    fn into(self) -> MilliSeconds {
+        MilliSeconds(self.0 * 1_000)
     }
 }
