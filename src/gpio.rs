@@ -54,7 +54,7 @@ impl Gpio
         Gpio { }
     }
 
-    pub fn set(&self, port: &GpioaModule::RegisterBlock, pin_no: u32, data: Io) {
+    pub fn set(port: &GpioaModule::RegisterBlock, pin_no: u32, data: Io) {
         let value: u32 = match data {
             Io::High => 1 << pin_no,
             Io::Low => 1 << (16 + pin_no),
@@ -62,7 +62,7 @@ impl Gpio
         port.bsrr.write(|w| unsafe { w.bits(value) });
     }
 
-    pub fn get(&self, port: &GpioaModule::RegisterBlock, pin_no: u32) -> Io {
+    pub fn get(port: &GpioaModule::RegisterBlock, pin_no: u32) -> Io {
         let value: bool = ((port.idr.read().bits()) & (1 << pin_no)) != 0;
         if value {
             Io::High
@@ -71,7 +71,7 @@ impl Gpio
         }
     }
 
-    pub fn alternate_function(&self, port:&GpioaModule::RegisterBlock, pin_no: u32, mode: u8) {
+    pub fn alternate_function(port:&GpioaModule::RegisterBlock, pin_no: u32, mode: u8) {
         if pin_no < 8 {
             let value = (mode as u32) << (pin_no * 4);
             let mask = !((0b1111 as u32) << (pin_no * 4));
@@ -83,19 +83,19 @@ impl Gpio
         }
     }
 
-    pub fn set_mode(&self, port:&GpioaModule::RegisterBlock, pin_no: u32, mode: Mode) {
+    pub fn set_mode(port:&GpioaModule::RegisterBlock, pin_no: u32, mode: Mode) {
         let value: u32 = (mode as u32) << (pin_no * 2);
         let mask = !((0b11 as u32) << (pin_no * 2));
         port.moder.modify(|r, w| unsafe { w.bits((r.bits() & mask) | value) })
     }
 
-    pub fn set_speed(&self, port: &GpioaModule::RegisterBlock, pin_no: u32, speed: Speed) {
+    pub fn set_speed(port: &GpioaModule::RegisterBlock, pin_no: u32, speed: Speed) {
         let value: u32 = (speed as u32) << (pin_no * 2);
         let mask = !((0b11 as u32) << (pin_no * 2));
         port.ospeedr.modify(|r, w| unsafe { w.bits((r.bits() & mask) | value) })
     }
 
-    pub fn set_pupd(&self, port: &GpioaModule::RegisterBlock, pin_no: u32, pupd: Pupd) {
+    pub fn set_pupd(port: &GpioaModule::RegisterBlock, pin_no: u32, pupd: Pupd) {
         let value: u32 = (pupd as u32) << (pin_no * 2);
         let mask = !((0b11 as u32) << (pin_no * 2));
         port.pupdr.modify(|r, w| unsafe { w.bits((r.bits() & mask) | value) })
@@ -107,28 +107,10 @@ macro_rules! gpio {
         $($PIN:ident: ($pin:ident, $n:expr),)+
     ]) => {
         pub mod $gpio {
-            use stm32f411::{gpioa, GPIOA};
             use super::Input;
 
             pub struct Parts {
-                pub port: Port,
                 $(pub $pin: super::$PIN<Input>,)+
-            }
-
-            pub struct Port {
-                pub gpio: super::Gpio,
-                //_0: (),
-            }
-
-            impl Port {
-                pub(crate) unsafe fn new() -> Self {
-                    //Port { _0: () }
-                    Port { gpio: super::Gpio::new(), }
-                }
-
-                pub(crate) fn port(&mut self) -> &gpioa::RegisterBlock {
-                    unsafe { &(*GPIOA::ptr()) }
-                }
             }
         }
 
@@ -139,8 +121,6 @@ macro_rules! gpio {
                 enr.ahb1().modify(|_, w| w.$iopen().set_bit());
 
                 $gpio::Parts {
-                    //gpio: Gpio::<$GPIO>::new(),
-                    port: unsafe { $gpio::Port::new() },
                     $($pin: $PIN { _state: Input },)+
                 }
             }
@@ -152,28 +132,28 @@ macro_rules! gpio {
             }
 
             impl<STATE> $PIN<STATE> {
-                pub fn set(&self, port: $gpio::Port, data: Io) {
-                    port.gpio.set(port.port(), $n, data);
+                pub fn set(&self, data: Io) {
+                    unsafe { Gpio::set(&(*$GPIO::ptr()), $n, data); }
                 }
 
-                pub fn get(&self, port: $gpio::Port) -> Io {
-                    port.gpio.get(port.port(), $n)
+                pub fn get(&self) -> Io {
+                    unsafe { Gpio::get(&(*$GPIO::ptr()), $n) }
                 }
 
-                pub fn alternate_function(&self, port:$gpio::Port, mode: u8) {
-                    port.gpio.alternate_function(port.port(), $n, mode);
+                pub fn alternate_function(&self, mode: u8) {
+                    unsafe { Gpio::alternate_function(&(*$GPIO::ptr()), $n, mode); }
                 }
 
-                pub fn set_mode(&self, port:$gpio::Port, mode: Mode) {
-                    port.gpio.set_mode(port.port(), $n, mode);
+                pub fn set_mode(&self, mode: Mode) {
+                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, mode); }
                 }
 
-                pub fn set_speed(&self, port: $gpio::Port, speed: Speed) {
-                    port.gpio.set_speed(port.port(), $n, speed);
+                pub fn set_speed(&self, speed: Speed) {
+                    unsafe { Gpio::set_speed(&(*$GPIO::ptr()), $n, speed); }
                 }
 
-                pub fn set_pupd(&self, port: $gpio::Port, pupd: Pupd) {
-                    port.gpio.set_pupd(port.port(), $n, pupd);
+                pub fn set_pupd(&self, pupd: Pupd) {
+                    unsafe { Gpio::set_pupd(&(*$GPIO::ptr()), $n, pupd); }
                 }
             }
 
