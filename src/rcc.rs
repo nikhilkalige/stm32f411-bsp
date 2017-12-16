@@ -151,11 +151,11 @@ impl CFGR {
         if let Some(pllmul_bits) = pllmul_bits {
             // use PLL as source
 
-            rcc.cfgr.write(|w| unsafe { w.pllmul().bits(pllmul_bits) });
+            rcc.pllcfgr.write(|w| unsafe { w.pllm().bits(pllmul_bits) });
 
-            rcc.cr.write(|w| w.pllon().enabled());
+            rcc.cr.write(|w| w.pllon().set_bit());
 
-            while rcc.cr.read().pllrdy().is_unlocked() {}
+            while rcc.cr.read().pllrdy().bit_is_set() {}
 
             rcc.cfgr.modify(|_, w| unsafe {
                 w.ppre2()
