@@ -15,6 +15,8 @@ pub extern crate stm32f411;
 pub mod time;
 pub mod rcc;
 pub mod gpio;
+pub mod usart;
+pub mod spi;
 
 use cortex_m::itm;
 
