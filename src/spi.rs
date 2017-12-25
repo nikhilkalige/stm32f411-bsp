@@ -84,20 +84,18 @@ impl<DmaTxStream, DmaRxStream> Spi<DmaTxStream, DmaRxStream> {
         self.spi.cr1.modify(|_, w| w.dff().variant(size));
     }
 
-    pub fn clk_polarity(&self, polarity: Polarity) {
-        let pol = match polarity {
+    pub fn set_mode(&self, mode: Mode) {
+        let pol = match mode.polarity {
             Polarity::IdleLow => StmPolarity::LOW,
             Polarity::IdleHigh => StmPolarity::HIGH,
         };
         self.spi.cr1.modify(|_, w| w.cpol().variant(pol));
-    }
 
-    pub fn clk_phase(&self, phase: Phase) {
-        let pha = match phase {
+        let phase = match mode.phase {
             Phase::CaptureOnFirstTransition => StmPhase::_1EDGE,
             Phase::CaptureOnSecondTransition => StmPhase::_2EDGE,
         };
-        self.spi.cr1.modify(|_, w| w.cpha().variant(pha));
+        self.spi.cr1.modify(|_, w| w.cpha().variant(phase));
     }
 
     pub fn nss(&self, nss: NSS) {
