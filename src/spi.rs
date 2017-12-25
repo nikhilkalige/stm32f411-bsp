@@ -7,7 +7,7 @@ use core::marker::Unsize;
 use core::ptr;
 use cast::u16;
 
-use hal::spi::{self, DmaTransfer, Mode, Phase, Polarity};
+use hal::spi::{self, DmaRead, DmaWrite, DmaReadWrite, Mode, Phase, Polarity};
 use hal::dma::Error as DmaError;
 use hal::blocking;
 use nb;
@@ -20,7 +20,7 @@ pub use stm32f411::i2s2ext::cr1::CPHAW as StmPhase;
 use gpio::{AltFunction, PA1, PA11, PB13};
 use rcc::{Clocks, ENR};
 use time::Hertz;
-use dma::{D2S1, D2S4, Transfer as DmaTransferObject};
+use dma::{D2S1, D2S4, Transfer as DmaTransferObject, Static};
 
 /// SPI error
 #[derive(Debug, PartialEq)]
@@ -245,8 +245,8 @@ impl<DmaTxStream, DmaRxStream> blocking::spi::FullDuplex<u8> for Spi<DmaTxStream
     }
 }
 
-impl DmaTransfer<u8> for Spi<D2S1, D2S4> {
-    type Transfer = DmaTransferObject<D2S1, [u8], Spi<D2S1, D2S4>>;
+impl DmaWrite<u8> for Spi<D2S1, D2S4> {
+    type Transfer = DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>;
 
     fn send_dma<Buffer, Spi>(self, words: &'static mut Buffer) -> Self::Transfer
     where
@@ -267,8 +267,12 @@ impl DmaTransfer<u8> for Spi<D2S1, D2S4> {
 
             txstream.enable();
         }
-        DmaTransferObject::new(words, None, self)
+        DmaTransferObject::new(words, self)
     }
+}
+
+impl DmaRead<u8> for Spi<D2S1, D2S4> {
+    type Transfer = DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>;
 
     fn recieve_dma<Buffer, Spi>(self, words: &'static mut Buffer) -> Self::Transfer
     where
@@ -289,8 +293,12 @@ impl DmaTransfer<u8> for Spi<D2S1, D2S4> {
 
             rxstream.enable();
         }
-        DmaTransferObject::new(words, None, self)
+        DmaTransferObject::new(words, self)
     }
+}
+
+impl DmaReadWrite<u8> for Spi<D2S1, D2S4> {
+    type Transfer = DmaTransferObject<D2S1, (Static<[u8]>, Static<[u8]>), Spi<D2S1, D2S4>>;
 
     fn transfer_dma<Buffer, Payload>(
         self,
@@ -324,6 +332,6 @@ impl DmaTransfer<u8> for Spi<D2S1, D2S4> {
             rx_stream.enable();
             tx_stream.enable();
         }
-        DmaTransferObject::new(tx_words, Some(rx_words), self)
+        DmaTransferObject::new((tx_words, rx_words), self)
     }
 }

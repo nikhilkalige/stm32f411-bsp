@@ -28,24 +28,18 @@ pub enum Mode {
 // This is bit like a `Future` minus the panicking `poll` method
 pub struct Transfer<Stream, B, Payload>
 where
-    B: 'static + ?Sized
+    B: 'static
 {
     _stream: PhantomData<Stream>,
-    buffer:  Static<B>,
-    optional_buffer: Option<Static<B>>,
+    buffer: B,
     payload: Payload,
 }
 
-impl<Stream, B: ?Sized, Payload> Transfer<Stream, B, Payload> {
-    pub(crate) fn new(
-        buffer: Static<B>,
-        optional_buffer: Option<Static<B>>,
-        payload: Payload
-    ) -> Self {
+impl<Stream, B, Payload> Transfer<Stream, B, Payload> {
+    pub(crate) fn new(buffer: B, payload: Payload) -> Self {
         Transfer {
             _stream: PhantomData,
             buffer,
-            optional_buffer,
             payload,
         }
     }
@@ -83,12 +77,15 @@ macro_rules! streams {
         $(
             pub struct $STREAM { _0: () }
 
-            impl<B: ?Sized, Payload> DmaTransfer for Transfer<$STREAM, B, Payload> {
+            impl<B, Payload> DmaTransfer for Transfer<$STREAM, B, Payload>
+            where
+                B: Sized
+            {
                 type Item = B;
                 type Payload = Payload;
 
                 fn deref(&self) -> &Self::Item {
-                    return self.buffer
+                    return &self.buffer
                 }
 
                 fn is_done(&self) -> Result<bool, Error> {
@@ -102,7 +99,7 @@ macro_rules! streams {
                     }
                 }
 
-                fn wait(self) -> Result<(Static<Self::Item>, Payload), Error> {
+                fn wait(self) -> Result<(Self::Item, Payload), Error> {
                     while !self.is_done()? {}
 
                     atomic::compiler_fence(Ordering::SeqCst);
