@@ -17,6 +17,7 @@ pub mod rcc;
 pub mod gpio;
 pub mod usart;
 pub mod spi;
+pub mod dma;
 
 use cortex_m::itm;
 

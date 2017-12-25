@@ -36,7 +36,8 @@ default-features = false
 version = "1.3.0"
 
 [dependencies.embedded-hal]
-git = "https://github.com/japaric/embedded-hal"
+# git = "https://github.com/japaric/embedded-hal"
+path = "../../rust-resources/embedded-hal/"
 
 [dependencies.nb]
 git = "https://github.com/japaric/nb"

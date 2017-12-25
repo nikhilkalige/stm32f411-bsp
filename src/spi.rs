@@ -3,8 +3,13 @@
 //! You can use the `Spi` interface with these SPI instances
 //!
 
+use core::marker::Unsize;
 use core::ptr;
-use hal::spi::{self, Mode, Phase, Polarity};
+use cast::u16;
+
+use hal::spi::{self, DmaTransfer, Mode, Phase, Polarity};
+use hal::dma::Error as DmaError;
+use hal::blocking;
 use nb;
 use stm32f411::SPI2;
 
@@ -12,9 +17,10 @@ pub use stm32f411::i2s2ext::cr1::DFFW as DataSize;
 pub use stm32f411::i2s2ext::cr1::CPOLW as StmPolarity;
 pub use stm32f411::i2s2ext::cr1::CPHAW as StmPhase;
 
-use gpio::{AltFunction, PB13, PA11, PA1};
+use gpio::{AltFunction, PA1, PA11, PB13};
 use rcc::{Clocks, ENR};
 use time::Hertz;
+use dma::{D2S1, D2S4, Transfer as DmaTransferObject};
 
 /// SPI error
 #[derive(Debug, PartialEq)]
@@ -41,24 +47,29 @@ pub enum NSS {
     HardOutput,
 }
 
-pub struct Spi {
-    spi: SPI2
+pub struct Spi<DmaTxStream, DmaRxStream> {
+    spi: SPI2,
+    dmatx: Option<DmaTxStream>,
+    dmarx: Option<DmaRxStream>,
 }
 
-impl Spi {
+impl<DmaTxStream, DmaRxStream> Spi<DmaTxStream, DmaRxStream> {
     /// MSB Format
     pub fn new(
         spi: SPI2,
         (_sck, _mosi, _miso): (PB13<AltFunction>, PA1<AltFunction>, PA11<AltFunction>),
-        enr: &mut ENR
-    ) -> Self
-    {
+        enr: &mut ENR,
+    ) -> Self {
         enr.apb1().modify(|_, w| w.spi2en().set_bit());
         _sck.alternate_function(6);
         _miso.alternate_function(6);
         _miso.alternate_function(5);
 
-        Spi { spi }
+        Spi {
+            spi,
+            dmatx: None,
+            dmarx: None,
+        }
     }
 
     pub fn direction(&self, direction: Direction) {
@@ -148,5 +159,171 @@ impl Spi {
 
     pub fn disable(&self) {
         self.spi.cr1.modify(|_, w| w.spe().clear_bit())
+    }
+}
+
+impl<DmaTxStream, DmaRxStream> spi::FullDuplex<u8> for Spi<DmaTxStream, DmaRxStream> {
+    type Error = Error;
+
+    fn read(&mut self) -> nb::Result<u8, Error> {
+        let sr = self.spi.sr.read();
+
+        if sr.ovr().bit_is_set() {
+            Err(nb::Error::Other(Error::Overrun))
+        } else if sr.modf().bit_is_set() {
+            Err(nb::Error::Other(Error::ModeFault))
+        } else if sr.crcerr().bit_is_set() {
+            Err(nb::Error::Other(Error::Crc))
+        } else if sr.rxne().bit_is_set() {
+            Ok(unsafe { ptr::read_volatile(&self.spi.dr as *const _ as *const u8) })
+        } else {
+            Err(nb::Error::WouldBlock)
+        }
+    }
+
+    fn send(&mut self, byte: u8) -> nb::Result<(), Error> {
+        let sr = self.spi.sr.read();
+
+        if sr.ovr().bit_is_set() {
+            Err(nb::Error::Other(Error::Overrun))
+        } else if sr.modf().bit_is_set() {
+            Err(nb::Error::Other(Error::ModeFault))
+        } else if sr.crcerr().bit_is_set() {
+            Err(nb::Error::Other(Error::Crc))
+        } else if sr.txe().bit_is_set() {
+            // NOTE(write_volatile) see note above
+            unsafe { ptr::write_volatile(&self.spi.dr as *const _ as *mut u8, byte) }
+            Ok(())
+        } else {
+            Err(nb::Error::WouldBlock)
+        }
+    }
+}
+
+impl<DmaTxStream, DmaRxStream> blocking::spi::FullDuplex<u8> for Spi<DmaTxStream, DmaRxStream> {
+    type Error = Error;
+
+    fn transfer<'b>(&mut self, bytes: &'b mut [u8]) -> Result<&'b [u8], Error> {
+        blocking::spi::transfer(self, bytes)
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        for byte in bytes {
+            'l: loop {
+                let sr = self.spi.sr.read();
+
+                // ignore overruns because we don't care about the incoming data
+                // if sr.ovr().bit_is_set() {
+                // Err(nb::Error::Other(Error::Overrun))
+                // } else
+                if sr.modf().bit_is_set() {
+                    return Err(Error::ModeFault);
+                } else if sr.crcerr().bit_is_set() {
+                    return Err(Error::Crc);
+                } else if sr.txe().bit_is_set() {
+                    // NOTE(write_volatile) see note above
+                    unsafe {
+                        ptr::write_volatile(&self.spi.dr as *const _ as *mut u8, *byte)
+                    }
+                    break 'l;
+                } else {
+                    // try again
+                }
+            }
+        }
+
+        // wait until the transmission of the last byte is done
+        while self.spi.sr.read().bsy().bit_is_set() {}
+
+        // clear OVR flag
+        unsafe {
+            ptr::read_volatile(&self.spi.dr as *const _ as *const u8);
+        }
+        self.spi.sr.read();
+
+        Ok(())
+    }
+}
+
+impl DmaTransfer<u8> for Spi<D2S1, D2S4> {
+    type Transfer = DmaTransferObject<D2S1, [u8], Spi<D2S1, D2S4>>;
+
+    fn send_dma<Buffer, Spi>(self, words: &'static mut Buffer) -> Self::Transfer
+    where
+        Buffer: Unsize<[u8]>,
+    {
+        {
+            // Assume dma object does not panic
+            let txstream = self.dmatx.as_ref().unwrap();
+            // This is a sanity check. Due to move semantics the channel is *never* in use at this point
+            debug_assert!(!txstream.is_enabled());
+
+            let slice: &mut [u8] = words;
+            txstream.set_config(
+                slice.as_ptr() as u32,
+                &self.spi.dr as *const _ as u32,
+                u16(slice.len()).unwrap(),
+            );
+
+            txstream.enable();
+        }
+        DmaTransferObject::new(words, None, self)
+    }
+
+    fn recieve_dma<Buffer, Spi>(self, words: &'static mut Buffer) -> Self::Transfer
+    where
+        Buffer: Unsize<[u8]>,
+    {
+        {
+            // Assume dma object does not panic
+            let rxstream = self.dmarx.as_ref().unwrap();
+            // This is a sanity check. Due to move semantics the channel is *never* in use at this point
+            debug_assert!(!rxstream.is_enabled());
+
+            let slice: &mut [u8] = words;
+            rxstream.set_config(
+                &self.spi.dr as *const _ as u32,
+                slice.as_ptr() as u32,
+                u16(slice.len()).unwrap(),
+            );
+
+            rxstream.enable();
+        }
+        DmaTransferObject::new(words, None, self)
+    }
+
+    fn transfer_dma<Buffer, Payload>(
+        self,
+        tx_words: &'static mut Buffer,
+        rx_words: &'static mut Buffer,
+    ) -> Self::Transfer
+    where
+        Buffer: Unsize<[u8]>,
+    {
+        {
+            // Assume dma object does not panic
+            let rx_stream = self.dmarx.as_ref().unwrap();
+            let tx_stream = self.dmarx.as_ref().unwrap();
+            // This is a sanity check. Due to move semantics the channel is *never* in use at this point
+            debug_assert!(!rx_stream.is_enabled());
+
+            let rx_slice: &mut [u8] = rx_words;
+            rx_stream.set_config(
+                &self.spi.dr as *const _ as u32,
+                rx_slice.as_ptr() as u32,
+                u16(rx_slice.len()).unwrap(),
+            );
+
+            let tx_slice: &mut [u8] = tx_words;
+            tx_stream.set_config(
+                tx_slice.as_ptr() as u32,
+                &self.spi.dr as *const _ as u32,
+                u16(tx_slice.len()).unwrap(),
+            );
+
+            rx_stream.enable();
+            tx_stream.enable();
+        }
+        DmaTransferObject::new(tx_words, Some(rx_words), self)
     }
 }

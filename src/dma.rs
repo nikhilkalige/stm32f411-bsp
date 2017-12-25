@@ -1,358 +1,282 @@
-//! Direct Memory Access (DMA)
-
-use core::cell::{Cell, UnsafeCell};
-use core::marker::PhantomData;
+use core::marker::{Unsize, PhantomData};
 use core::ops;
+use core::sync::atomic::{self, Ordering};
+use hal::dma::Transfer as DmaTransfer;
+use hal::dma::Error;
 
 use nb;
-use stm32f103xx::DMA1;
+use stm32f411::{DMA1, DMA2, dma2};
+pub use stm32f411::dma2::scr::CHSELW as Channel;
+pub use stm32f411::dma2::scr::DIRW as Direction;
+pub use stm32f411::dma2::scr::MBURSTW as MemoryBurst;
+pub use stm32f411::dma2::scr::PBURSTW as PeripheralBurst;
+pub use stm32f411::dma2::scr::PLW as Priority;
+pub use stm32f411::dma2::scr::MSIZEW as DataSize;
 
-/// DMA error
-#[derive(Debug)]
-pub enum Error {
-    /// DMA channel in use
-    InUse,
-    /// Previous data got overwritten before it could be read because it was
-    /// not accessed in a timely fashion
-    Overrun,
-    /// Transfer error
-    Transfer,
+use rcc::ENR;
+
+pub type Static<T> = &'static mut T;
+
+#[derive(Copy, Clone)]
+pub enum Mode {
+    Normal,
+    Circular,
+    PeripheralFlowControl,
 }
 
-/// Channel 1 of DMA1
-pub struct Dma1Channel1 {
-    _0: (),
-}
-
-/// Channel 2 of DMA1
-pub struct Dma1Channel2 {
-    _0: (),
-}
-
-/// Channel 4 of DMA1
-pub struct Dma1Channel4 {
-    _0: (),
-}
-
-/// Channel 5 of DMA1
-pub struct Dma1Channel5 {
-    _0: (),
-}
-
-/// Buffer to be used with a certain DMA `CHANNEL`
-// NOTE(packed) workaround for rust-lang/rust#41315
-#[repr(packed)]
-pub struct Buffer<T, CHANNEL> {
-    data: UnsafeCell<T>,
-    flag: Cell<BorrowFlag>,
-    state: Cell<State>,
-    _marker: PhantomData<CHANNEL>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum State {
-    // A new `Buffer` starts in this state. We set it to zero to place this
-    // buffer in the .bss section
-    Unlocked = 0,
-
-    Locked,
-    MutLocked,
-}
-
-type BorrowFlag = usize;
-
-const UNUSED: BorrowFlag = 0;
-const WRITING: BorrowFlag = !0;
-
-/// Wraps a borrowed reference to a value in a `Buffer`
-pub struct Ref<'a, T>
-    where T: 'a
+/// An on-going DMA transfer
+// This is bit like a `Future` minus the panicking `poll` method
+pub struct Transfer<Stream, B, Payload>
+where
+    B: 'static + ?Sized
 {
-    data: &'a T,
-    flag: &'a Cell<BorrowFlag>,
+    _stream: PhantomData<Stream>,
+    buffer:  Static<B>,
+    optional_buffer: Option<Static<B>>,
+    payload: Payload,
 }
 
-impl<'a, T> ops::Deref for Ref<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.data
-    }
-}
-
-impl<'a, T> Drop for Ref<'a, T> {
-    fn drop(&mut self) {
-        self.flag.set(self.flag.get() - 1);
-    }
-}
-
-/// A wrapper type for a mutably borrowed value from a `Buffer``
-pub struct RefMut<'a, T>
-    where T: 'a
-{
-    data: &'a mut T,
-    flag: &'a Cell<BorrowFlag>,
-}
-
-impl<'a, T> ops::Deref for RefMut<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        self.data
-    }
-}
-
-impl<'a, T> ops::DerefMut for RefMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        self.data
-    }
-}
-
-impl<'a, T> Drop for RefMut<'a, T> {
-    fn drop(&mut self) {
-        self.flag.set(UNUSED);
-    }
-}
-
-impl<T, CHANNEL> Buffer<T, CHANNEL> {
-    /// Creates a new buffer
-    pub const fn new(data: T) -> Self {
-        Buffer {
-            _marker: PhantomData,
-            data: UnsafeCell::new(data),
-            flag: Cell::new(0),
-            state: Cell::new(State::Unlocked),
-        }
-    }
-
-    /// Immutably borrows the wrapped value.
-    ///
-    /// The borrow lasts until the returned `Ref` exits scope. Multiple
-    /// immutable borrows can be taken out at the same time.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the value is currently mutably borrowed.
-    pub fn borrow(&self) -> Ref<T> {
-        assert_ne!(self.flag.get(), WRITING);
-
-        self.flag.set(self.flag.get() + 1);
-
-        Ref {
-            data: unsafe { &*self.data.get() },
-            flag: &self.flag,
-        }
-    }
-
-    /// Mutably borrows the wrapped value.
-    ///
-    /// The borrow lasts until the returned `RefMut` exits scope. The value
-    /// cannot be borrowed while this borrow is active.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the value is currently borrowed.
-    pub fn borrow_mut(&self) -> RefMut<T> {
-        assert_eq!(self.flag.get(), UNUSED);
-
-        self.flag.set(WRITING);
-
-        RefMut {
-            data: unsafe { &mut *self.data.get() },
-            flag: &self.flag,
-        }
-    }
-
-    pub(crate) fn lock(&self) -> &T {
-        assert_eq!(self.state.get(), State::Unlocked);
-        assert_ne!(self.flag.get(), WRITING);
-
-        self.flag.set(self.flag.get() + 1);
-        self.state.set(State::Locked);
-
-        unsafe { &*self.data.get() }
-    }
-
-    pub(crate) fn lock_mut(&self) -> &mut T {
-        assert_eq!(self.state.get(), State::Unlocked);
-        assert_eq!(self.flag.get(), UNUSED);
-
-        self.flag.set(WRITING);
-        self.state.set(State::MutLocked);
-
-        unsafe { &mut *self.data.get() }
-    }
-
-    unsafe fn unlock(&self, state: State) {
-        match state {
-            State::Locked => self.flag.set(self.flag.get() - 1),
-            State::MutLocked => self.flag.set(UNUSED),
-            _ => { /* unreachable!() */ }
-        }
-
-        self.state.set(State::Unlocked);
-    }
-}
-
-// FIXME these `release` methods probably want some of sort of barrier
-impl<T> Buffer<T, Dma1Channel2> {
-    /// Waits until the DMA releases this buffer
-    pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let state = self.state.get();
-
-        if state == State::Unlocked {
-            return Ok(());
-        }
-
-        if dma1.isr.read().teif2().bit_is_set() {
-            Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif2().bit_is_set() {
-            unsafe { self.unlock(state) }
-            dma1.ifcr.write(|w| w.ctcif2().set_bit());
-            dma1.ccr2.modify(|_, w| w.en().clear_bit());
-            Ok(())
-        } else {
-            Err(nb::Error::WouldBlock)
+impl<Stream, B: ?Sized, Payload> Transfer<Stream, B, Payload> {
+    pub(crate) fn new(
+        buffer: Static<B>,
+        optional_buffer: Option<Static<B>>,
+        payload: Payload
+    ) -> Self {
+        Transfer {
+            _stream: PhantomData,
+            buffer,
+            optional_buffer,
+            payload,
         }
     }
 }
 
-impl<T> Buffer<T, Dma1Channel4> {
-    /// Waits until the DMA releases this buffer
-    pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let state = self.state.get();
+// impl DmaTransfer<Buffer, Payload> for Transfer<Read, Stream, Buffer, Payload> {
+//     fn deref(&Self) -> &Buffer {
+//         self.buffer
+//     }
+// }
+// impl<Buffer, Payload> ops::Deref for Transfer<Read, Stream, Buffer, Payload> {
+//     type Target = Buffer;
 
-        if state == State::Unlocked {
-            return Ok(());
-        }
+//     fn deref(&self) -> &Buffer {
+//         self.buffer
+//     }
+// }
 
-        if dma1.isr.read().teif4().bit_is_set() {
-            Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif4().bit_is_set() {
-            unsafe { self.unlock(state) }
-            dma1.ifcr.write(|w| w.ctcif4().set_bit());
-            dma1.ccr4.modify(|_, w| w.en().clear_bit());
-            Ok(())
-        } else {
-            Err(nb::Error::WouldBlock)
-        }
-    }
-}
+macro_rules! streams {
+    ($DMA:ident, $dmaen:ident, {
+        $($STREAM:ident: ($STATUS:ident, ($TCIF:ident, $HTIF:ident, $TEIF:ident, $DMEIF:ident),
+                          $INT:ident, ($CTCIF: ident, $CHTIF: ident, $CTEIF: ident, $CDMEIF: ident),
+                          $SCR:ident, $SNDTR:ident, $SPAR:ident, $SM0AR:ident, $SM1AR:ident),)+
+    }) => {
+        impl DmaExt for $DMA {
+            type Streams = ($($STREAM),+);
 
-impl<T> Buffer<T, Dma1Channel5> {
-    /// Waits until the DMA releases this buffer
-    pub fn release(&self, dma1: &DMA1) -> nb::Result<(), Error> {
-        let state = self.state.get();
+            fn split(self, enr: &mut ENR) -> ($($STREAM),+) {
+                enr.ahb1().modify(|_, w| w.$dmaen().set_bit());
 
-        if state == State::Unlocked {
-            return Ok(());
-        }
-
-        if dma1.isr.read().teif5().bit_is_set() {
-            Err(nb::Error::Other(Error::Transfer))
-        } else if dma1.isr.read().tcif5().bit_is_set() {
-            unsafe { self.unlock(state) }
-            dma1.ifcr.write(|w| w.ctcif5().set_bit());
-            dma1.ccr5.modify(|_, w| w.en().clear_bit());
-            Ok(())
-        } else {
-            Err(nb::Error::WouldBlock)
-        }
-    }
-}
-
-/// A circular buffer associated to a DMA `CHANNEL`
-pub struct CircBuffer<B, CHANNEL> {
-    _marker: PhantomData<CHANNEL>,
-    buffer: UnsafeCell<[B; 2]>,
-    state: Cell<CircState>,
-}
-
-impl<B, CHANNEL> CircBuffer<B, CHANNEL> {
-    pub(crate) fn lock(&self) -> &[B; 2] {
-        assert_eq!(self.state.get(), CircState::Free);
-
-        self.state.set(CircState::MutatingFirstHalf);
-
-        unsafe { &*self.buffer.get() }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CircState {
-    /// Not in use by the DMA
-    Free,
-    /// The DMA is mutating the first half of the buffer
-    MutatingFirstHalf,
-    /// The DMA is mutating the second half of the buffer
-    MutatingSecondHalf,
-}
-
-impl<B> CircBuffer<B, Dma1Channel1> {
-    /// Constructs a circular buffer from two halves
-    pub const fn new(buffer: [B; 2]) -> Self {
-        CircBuffer {
-            _marker: PhantomData,
-            buffer: UnsafeCell::new(buffer),
-            state: Cell::new(CircState::Free),
-        }
-    }
-
-    /// Yields read access to the half of the circular buffer that's not
-    /// currently being mutated by the DMA
-    pub fn read<R, F>(&self, dma1: &DMA1, f: F) -> nb::Result<R, Error>
-        where F: FnOnce(&B) -> R
-    {
-        let state = self.state.get();
-
-        assert_ne!(state, CircState::Free);
-
-        let isr = dma1.isr.read();
-
-        if isr.teif1().bit_is_set() {
-            Err(nb::Error::Other(Error::Transfer))
-        } else {
-            match state {
-                CircState::MutatingFirstHalf => {
-                    if isr.tcif1().bit_is_set() {
-                        Err(nb::Error::Other(Error::Overrun))
-                    } else if isr.htif1().bit_is_set() {
-                        dma1.ifcr.write(|w| w.chtif1().set_bit());
-
-                        self.state.set(CircState::MutatingSecondHalf);
-
-                        let ret = f(unsafe { &(*self.buffer.get())[0] });
-
-                        if isr.tcif1().bit_is_set() {
-                            Err(nb::Error::Other(Error::Overrun))
-                        } else {
-                            Ok(ret)
-                        }
-                    } else {
-                        Err(nb::Error::WouldBlock)
-                    }
-                }
-                CircState::MutatingSecondHalf => {
-                    if isr.htif1().bit_is_set() {
-                        Err(nb::Error::Other(Error::Overrun))
-                    } else if isr.tcif1().bit_is_set() {
-                        dma1.ifcr.write(|w| w.ctcif1().set_bit());
-
-                        self.state.set(CircState::MutatingFirstHalf);
-
-                        let ret = f(unsafe { &(*self.buffer.get())[1] });
-
-                        if isr.htif1().bit_is_set() {
-                            Err(nb::Error::Other(Error::Overrun))
-                        } else {
-                            Ok(ret)
-                        }
-                    } else {
-                        Err(nb::Error::WouldBlock)
-                    }
-                }
-                _ => unreachable!(),
+                ($($STREAM { _0: () }),+)
             }
         }
+
+        $(
+            pub struct $STREAM { _0: () }
+
+            impl<B: ?Sized, Payload> DmaTransfer for Transfer<$STREAM, B, Payload> {
+                type Item = B;
+                type Payload = Payload;
+
+                fn deref(&self) -> &Self::Item {
+                    return self.buffer
+                }
+
+                fn is_done(&self) -> Result<bool, Error> {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    let isr = dma.$STATUS.read();
+
+                    if isr.$TEIF().bit_is_set() {
+                        return Err(Error::Transfer);
+                    } else {
+                        return Ok(isr.$TCIF().bit_is_set());
+                    }
+                }
+
+                fn wait(self) -> Result<(Static<Self::Item>, Payload), Error> {
+                    while !self.is_done()? {}
+
+                    atomic::compiler_fence(Ordering::SeqCst);
+
+                    let dma = unsafe { &*$DMA::ptr() };
+
+                    // clear the "transfer complete" flag
+                    dma.$INT.write(|w| w.$CTCIF().set_bit());
+
+                    // disable this channel
+                    // XXX maybe not required?
+                    // dma.$ccr.modify(|_, w| w.en().clear_bit());
+
+                    Ok((self.buffer, self.payload))
+                }
+            }
+
+            impl $STREAM {
+                pub fn channel(&self, channel: Channel) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.chsel().variant(channel));
+                }
+
+                pub fn direction(&self, direction: Direction) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.dir().variant(direction));
+                }
+
+                pub fn peripheral_increment(&self, inc: bool) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    if inc {
+                        dma.$SCR.modify(|_, w| w.pinc().enable());
+                    } else {
+                        dma.$SCR.modify(|_, w| w.pinc().disable());
+                    }
+                }
+
+                pub fn memory_increment(&self, inc: bool) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    if inc {
+                        dma.$SCR.modify(|_, w| w.minc().enable());
+                    } else {
+                        dma.$SCR.modify(|_, w| w.minc().disable());
+                    }
+                }
+
+                pub fn periphdata_alignment(&self, size: DataSize) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.psize().variant(size));
+                }
+
+                pub fn memdata_alignment(&self, size: DataSize) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.msize().variant(size));
+                }
+
+                pub fn mode(&self, mode: Mode) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    match mode {
+                        Mode::Normal => dma.$SCR.modify(|_, w| w.circ().clear_bit().pfctrl().clear_bit()),
+                        Mode::Circular => dma.$SCR.modify(|_, w| w.circ().enable().pfctrl().clear_bit()),
+                        Mode::PeripheralFlowControl => dma.$SCR.modify(|_, w| w.circ().disable().pfctrl().set_bit()),
+                    }
+                }
+
+                pub fn priority(&self, priority: Priority) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.pl().variant(priority));
+                }
+
+                // pub fn fifo_mode(&self) {
+                //     dma.$SCR.modify(|_, w| w.().variant(priority));
+                // }
+
+                // pub fn fifo_threshold(&self, ) {}
+
+                pub fn memory_burst(&self, burst: MemoryBurst) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.mburst().variant(burst));
+                }
+
+                pub fn peripheral_burst(&self, burst: PeripheralBurst) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.pburst().variant(burst));
+                }
+
+                pub fn enable(&self) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.en().set_bit());
+                }
+
+                pub fn disable(&self) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.modify(|_, w| w.en().clear_bit());
+                }
+
+                pub fn is_enabled(&self) -> bool {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SCR.read().en().bit_is_set()
+                }
+
+                pub fn set_config(&self, src_address: u32, dst_address: u32, length: u16) {
+                    let dma = unsafe { &*$DMA::ptr() };
+                    dma.$SNDTR.write(|w| unsafe { w.ndt().bits(length) });
+                    if dma.$SCR.read().dir().is_periph_to_memory() {
+                        dma.$SPAR.write(|w| unsafe { w.bits(src_address) });
+                        dma.$SM0AR.write(|w| unsafe { w.bits(dst_address) });
+                    }
+                    else {
+                        dma.$SPAR.write(|w| unsafe { w.bits(dst_address) });
+                        dma.$SM0AR.write(|w| unsafe { w.bits(src_address) });
+                    }
+                }
+            }
+        )+
     }
+}
+
+streams!(DMA1, dma1en, {
+    D1S0: (lisr,  (tcif0, htif0, teif0, dmeif0),
+           lifcr, (ctcif0, chtif0, cteif0, cdmeif0),
+           s0cr, s0ndtr, s0par, s0m0ar, s0m1ar),
+    D1S1: (lisr,  (tcif1, htif1, teif1, dmeif1),
+           lifcr, (ctcif1, chtif1, cteif1, cdmeif1),
+           s1cr, s1ndtr, s1par, s1m0ar, s1m1ar),
+    D1S2: (lisr,  (tcif2, htif2, teif2, dmeif2),
+           lifcr, (ctcif2, chtif2, cteif2, cdmeif2),
+           s2cr, s2ndtr, s2par, s2m0ar, s2m1ar),
+    D1S3: (lisr,  (tcif3, htif3, teif3, dmeif3),
+           lifcr, (ctcif3, chtif3, cteif3, cdmeif3),
+           s3cr, s3ndtr, s3par, s3m0ar, s3m1ar),
+    D1S4: (hisr,  (tcif4, htif4, teif4, dmeif4),
+           hifcr, (ctcif4, chtif4, cteif4, cdme4f0),
+           s4cr, s4ndtr, s4par, s4m0ar, s4m1ar),
+    D1S5: (hisr,  (tcif5, htif5, teif5, dmeif5),
+           hifcr, (ctcif5, chtif5, cteif5, cdme5f0),
+           s5cr, s5ndtr, s5par, s5m0ar, s5m1ar),
+    D1S6: (hisr,  (tcif6, htif6, teif6, dmeif6),
+           hifcr, (ctcif6, chtif6, cteif6, cdme6f0),
+           s6cr, s6ndtr, s6par, s6m0ar, s6m1ar),
+    D1S7: (hisr,  (tcif7, htif7, teif7, dmeif7),
+           hifcr, (ctcif7, chtif7, cteif7, cdme7f0),
+           s7cr, s7ndtr, s7par, s7m0ar, s7m1ar),
+});
+
+streams!(DMA2, dma2en, {
+    D2S0: (lisr,  (tcif0, htif0, teif0, dmeif0),
+           lifcr, (ctcif0, chtif0, cteif0, cdmeif0),
+           s0cr, s0ndtr, s0par, s0m0ar, s0m1ar),
+    D2S1: (lisr,  (tcif1, htif1, teif1, dmeif1),
+           lifcr, (ctcif1, chtif1, cteif1, cdmeif1),
+           s1cr, s1ndtr, s1par, s1m0ar, s1m1ar),
+    D2S2: (lisr,  (tcif2, htif2, teif2, dmeif2),
+           lifcr, (ctcif2, chtif2, cteif2, cdmeif2),
+           s2cr, s2ndtr, s2par, s2m0ar, s2m1ar),
+    D2S3: (lisr,  (tcif3, htif3, teif3, dmeif3),
+           lifcr, (ctcif3, chtif3, cteif3, cdmeif3),
+           s3cr, s3ndtr, s3par, s3m0ar, s3m1ar),
+    D2S4: (hisr,  (tcif4, htif4, teif4, dmeif4),
+           hifcr, (ctcif4, chtif4, cteif4, cdme4f0),
+           s4cr, s4ndtr, s4par, s4m0ar, s4m1ar),
+    D2S5: (hisr,  (tcif5, htif5, teif5, dmeif5),
+           hifcr, (ctcif5, chtif5, cteif5, cdme5f0),
+           s5cr, s5ndtr, s5par, s5m0ar, s5m1ar),
+    D2S6: (hisr,  (tcif6, htif6, teif6, dmeif6),
+           hifcr, (ctcif6, chtif6, cteif6, cdme6f0),
+           s6cr, s6ndtr, s6par, s6m0ar, s6m1ar),
+    D2S7: (hisr,  (tcif7, htif7, teif7, dmeif7),
+           hifcr, (ctcif7, chtif7, cteif7, cdme7f0),
+           s7cr, s7ndtr, s7par, s7m0ar, s7m1ar),
+});
+
+pub trait DmaExt {
+    type Streams;
+
+    fn split(self, enr: &mut ENR) -> Self::Streams;
 }
