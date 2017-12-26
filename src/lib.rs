@@ -12,12 +12,14 @@ extern crate nb;
 pub extern crate embedded_hal as hal;
 pub extern crate stm32f411;
 
+pub mod bb;
 pub mod time;
 pub mod rcc;
 pub mod gpio;
 pub mod usart;
 pub mod spi;
 pub mod dma;
+pub mod pwm;
 
 use cortex_m::itm;
 
