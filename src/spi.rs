@@ -9,6 +9,7 @@ use cast::u16;
 
 use hal::spi::{self, DmaRead, DmaWrite, DmaReadWrite, Mode, Phase, Polarity};
 use hal::dma::Error as DmaError;
+use hal::dma::Transfer;
 use hal::blocking;
 use nb;
 use stm32f411::SPI2;
@@ -243,12 +244,15 @@ impl<DmaTxStream, DmaRxStream> blocking::spi::FullDuplex<u8> for Spi<DmaTxStream
     }
 }
 
-impl DmaWrite<u8> for Spi<D2S1, D2S4> {
-    type Transfer = DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>;
+impl<B> DmaWrite<B, u8> for Spi<D2S1, D2S4>
+where B: Unsize<[u8]> + 'static
+{
+    // fn send_dma<Buffer>(self, words: &'static mut Buffer)
+    //fn send_dma<B, T>(self, words: &'static mut B) -> DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>
+    type Transfer = DmaTransferObject<D2S1, &'static mut B, Spi<D2S1, D2S4>>;
 
-    fn send_dma<Buffer, Spi>(self, words: &'static mut Buffer) -> Self::Transfer
-    where
-        Buffer: Unsize<[u8]>,
+    fn send_dma(self, words: &'static mut B) -> Self::Transfer
+        // where B: Unsize<[u8]>, T: Transfer<Item=B, Payload=Self>
     {
         {
             // Assume dma object does not panic
@@ -268,6 +272,7 @@ impl DmaWrite<u8> for Spi<D2S1, D2S4> {
         DmaTransferObject::new(words, self)
     }
 }
+
 
 impl DmaRead<u8> for Spi<D2S1, D2S4> {
     type Transfer = DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>;
