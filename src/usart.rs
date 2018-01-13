@@ -1,16 +1,15 @@
 //! APIs for the USART peripherals
 
 use core::ops::Deref;
-use core::marker::Unsize;
 use core::ptr;
 
-use cast::u16;
 use hal;
 use nb;
-use stm32f411::{DMA1, USART1};
+use stm32f411::{USART2};
 use gpio::{AltFunction, PA2, PA3};
 use rcc::{Clocks, ENR};
 use time::Bps;
+pub use cortex_m::asm::{bkpt, wfi};
 
 #[derive(Debug)]
 pub enum Error {
@@ -35,7 +34,7 @@ pub enum Event {
 }
 
 pub struct Usart {
-    usart: USART1,
+    usart: USART2,
 }
 
 pub enum Pins {
@@ -49,7 +48,7 @@ impl From<(PA2<AltFunction>, PA3<AltFunction>)> for Pins {
 }
 
 impl Usart {
-    pub fn new<P>(usart: USART1, pins: P, bps: Bps, clocks: Clocks, enr: &mut ENR) -> Usart
+    pub fn new<P>(usart: USART2, pins: P, bps: Bps, clocks: Clocks, enr: &mut ENR) -> Usart
     where
         P: Into<Pins>,
     {
@@ -61,11 +60,14 @@ impl Usart {
                 rx.alternate_function(7);
             }
         }
+        let brr = clocks.pclk1().0 / ( 8 * (2 - 0) * bps.0) ;
+        // let brr = 0x8B ;
 
-        let brr = clocks.pclk1().0 / bps.0;
-        assert!(brr > 16, "impossible baud rate");
-
-        usart.brr.write(|w| unsafe { w.bits(brr) });
+        usart.brr.write(|w| unsafe { w.bits((brr << 4) | 0x0B) });
+        usart.cr1.modify(|_, w|
+            w.ue().set_bit()
+             .te().set_bit()
+             .re().set_bit());
 
         Usart { usart }
     }
@@ -90,7 +92,7 @@ impl Usart {
         (Tx { _0: () }, Rx { _0: () })
     }
 
-    pub fn unwrap(self) -> USART1 {
+    pub fn unwrap(self) -> USART2 {
         self.usart
     }
 }
@@ -103,7 +105,7 @@ impl hal::serial::Read<u8> for Rx {
     type Error = Error;
 
     fn read(&mut self) -> nb::Result<u8, Error> {
-        let usart = unsafe { &*USART1::ptr() };
+        let usart = unsafe { &*USART2::ptr() };
         let sr = usart.sr.read();
 
         if sr.ore().bit_is_set() {
@@ -132,7 +134,7 @@ impl hal::serial::Write<u8> for Tx {
     type Error = Error;
 
     fn write(&mut self, byte: u8) -> nb::Result<(), Error> {
-        let usart = unsafe { &*USART1::ptr() };
+        let usart = unsafe { &*USART2::ptr() };
         let sr = usart.sr.read();
 
         if sr.ore().bit_is_set() {
@@ -148,5 +150,9 @@ impl hal::serial::Write<u8> for Tx {
         } else {
             Err(nb::Error::WouldBlock)
         }
+    }
+
+    fn flush(&mut self) -> nb::Result<(), Error> {
+        Ok(())
     }
 }
