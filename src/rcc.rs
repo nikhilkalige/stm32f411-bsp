@@ -5,6 +5,12 @@ use stm32f411::{rcc, RCC};
 
 use time::Hertz;
 
+pub enum ClockSource {
+    Hsi,
+    Hse,
+    Pll,
+}
+
 pub trait RccExt {
     fn split(self) -> Rcc;
 }
@@ -28,7 +34,7 @@ pub struct Rcc {
     pub enr: ENR,
 }
 
-const HSI: u32 = 8_000_000; // Hz
+const HSI: u32 = 16_000_000; // Hz
 
 pub struct CFGR {
     hclk: Option<u32>,
@@ -70,7 +76,26 @@ impl CFGR {
         self
     }
 
-    pub fn freeze(self) -> Clocks {
+    pub fn freeze(self, source: ClockSource) -> Clocks {
+        match source {
+            ClockSource::Hsi => self.hsi(),
+            ClockSource::Hse => self.hsi(),
+            ClockSource::Pll => self.pll()
+        }
+    }
+
+    fn hsi(self) -> Clocks {
+        Clocks {
+            hclk: Hertz(HSI),
+            pclk1: Hertz(HSI),
+            pclk2: Hertz(HSI),
+            ppre1: 1,
+            ppre2: 1,
+            sysclk: Hertz(HSI),
+        }
+    }
+
+    fn pll(self) -> Clocks {
         let pllmul = (4 * self.sysclk.unwrap_or(HSI) + HSI) / HSI / 2;
         let pllmul = cmp::min(cmp::max(pllmul, 2), 16);
         let pllmul_bits = if pllmul == 2 {
