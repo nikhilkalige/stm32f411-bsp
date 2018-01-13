@@ -140,12 +140,24 @@ macro_rules! gpio {
                     unsafe { Gpio::get(&(*$GPIO::ptr()), $n) }
                 }
 
-                pub fn alternate_function(&self, mode: u8) {
-                    unsafe { Gpio::alternate_function(&(*$GPIO::ptr()), $n, mode); }
+                pub fn as_input(self) -> $PIN<Input> {
+                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, Mode::Input); }
+                    $PIN { _state: Input }
                 }
 
-                pub fn set_mode(&self, mode: Mode) {
-                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, mode); }
+                pub fn as_output(self) -> $PIN<Output> {
+                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, Mode::Output); }
+                    $PIN { _state: Output }
+                }
+
+                pub fn as_alt_function(self) -> $PIN<AltFunction> {
+                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, Mode::AlternateFunction); }
+                    $PIN { _state: AltFunction }
+                }
+
+                pub fn as_analog(self) -> $PIN<Analog> {
+                    unsafe { Gpio::set_mode(&(*$GPIO::ptr()), $n, Mode::Analog); }
+                    $PIN { _state: Analog }
                 }
 
                 pub fn set_speed(&self, speed: Speed) {
@@ -154,6 +166,12 @@ macro_rules! gpio {
 
                 pub fn set_pupd(&self, pupd: Pupd) {
                     unsafe { Gpio::set_pupd(&(*$GPIO::ptr()), $n, pupd); }
+                }
+            }
+
+            impl $PIN<AltFunction> {
+                pub fn alternate_function(&self, mode: u8) {
+                    unsafe { Gpio::alternate_function(&(*$GPIO::ptr()), $n, mode); }
                 }
             }
 
