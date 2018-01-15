@@ -7,16 +7,15 @@ use core::marker::Unsize;
 use core::ptr;
 use cast::u16;
 
-use hal::spi::{self, DmaRead, DmaWrite, DmaReadWrite, Mode, Phase, Polarity};
-use hal::dma::Error as DmaError;
-use hal::dma::Transfer;
+use hal::spi::{self, DmaWrite, Mode, Phase, Polarity};
 use hal::blocking;
 use nb;
-use stm32f411::SPI2;
+use stm32f411::SPI4;
 
 pub use stm32f411::i2s2ext::cr1::DFFW as DataSize;
 pub use stm32f411::i2s2ext::cr1::CPOLW as StmPolarity;
 pub use stm32f411::i2s2ext::cr1::CPHAW as StmPhase;
+pub use stm32f411::i2s2ext::cr1::MSTRW as Role;
 
 use gpio::{AltFunction, PA1, PA11, PB13};
 use rcc::{Clocks, ENR};
@@ -49,7 +48,7 @@ pub enum NSS {
 }
 
 pub struct Spi<DmaTxStream, DmaRxStream> {
-    spi: SPI2,
+    spi: SPI4,
     dmatx: Option<DmaTxStream>,
     dmarx: Option<DmaRxStream>,
 }
@@ -57,14 +56,14 @@ pub struct Spi<DmaTxStream, DmaRxStream> {
 impl<DmaTxStream, DmaRxStream> Spi<DmaTxStream, DmaRxStream> {
     /// MSB Format
     pub fn new(
-        spi: SPI2,
+        spi: SPI4,
         (_sck, _mosi, _miso): (PB13<AltFunction>, PA1<AltFunction>, PA11<AltFunction>),
         enr: &mut ENR,
     ) -> Self {
-        enr.apb1().modify(|_, w| w.spi2en().set_bit());
+        enr.apb2().modify(|_, w| w.spi4en().set_bit());
         _sck.alternate_function(6);
+        _mosi.alternate_function(5);
         _miso.alternate_function(6);
-        _miso.alternate_function(5);
 
         Spi {
             spi,
@@ -79,6 +78,10 @@ impl<DmaTxStream, DmaRxStream> Spi<DmaTxStream, DmaRxStream> {
             Direction::BidirectionalRxOnly => self.spi.cr1.modify(|_, w| w.rxonly().set_bit()),
             Direction::Unidirectional => self.spi.cr1.modify(|_, w| w.bidimode().set_bit()),
         }
+    }
+
+    pub fn set_role(&self, role: Role) {
+        self.spi.cr1.modify(|_, w| w.mstr().variant(role));
     }
 
     pub fn data_size(&self, size: DataSize) {
@@ -159,6 +162,8 @@ impl<DmaTxStream, DmaRxStream> Spi<DmaTxStream, DmaRxStream> {
     pub fn disable(&self) {
         self.spi.cr1.modify(|_, w| w.spe().clear_bit())
     }
+
+
 }
 
 impl<DmaTxStream, DmaRxStream> spi::FullDuplex<u8> for Spi<DmaTxStream, DmaRxStream> {
@@ -244,12 +249,13 @@ impl<DmaTxStream, DmaRxStream> blocking::spi::FullDuplex<u8> for Spi<DmaTxStream
     }
 }
 
+
 impl<B> DmaWrite<B, u8> for Spi<D2S1, D2S4>
 where B: Unsize<[u8]> + 'static
 {
     // fn send_dma<Buffer>(self, words: &'static mut Buffer)
     //fn send_dma<B, T>(self, words: &'static mut B) -> DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>
-    type Transfer = DmaTransferObject<D2S1, &'static mut B, Spi<D2S1, D2S4>>;
+    type Transfer = DmaTransferObject<D2S1, &'static mut B, Self>;
 
     fn send_dma(self, words: &'static mut B) -> Self::Transfer
         // where B: Unsize<[u8]>, T: Transfer<Item=B, Payload=Self>
@@ -273,7 +279,7 @@ where B: Unsize<[u8]> + 'static
     }
 }
 
-
+/*
 impl DmaRead<u8> for Spi<D2S1, D2S4> {
     type Transfer = DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>;
 
@@ -338,3 +344,32 @@ impl DmaReadWrite<u8> for Spi<D2S1, D2S4> {
         DmaTransferObject::new((tx_words, rx_words), self)
     }
 }
+
+impl DmaWrite<u8> for Spi<D2S1, D2S4>
+{
+    // fn send_dma<Buffer>(self, words: &'static mut Buffer)
+    //fn send_dma<B, T>(self, words: &'static mut B) -> DmaTransferObject<D2S1, Static<[u8]>, Spi<D2S1, D2S4>>
+    type Transfer = DmaTransferObject<D2S1, Spi<D2S1, D2S4>>;
+
+    fn send_dma(self, words: &'static mut [u8]) -> Self::Transfer
+        // where B: Unsize<[u8]>, T: Transfer<Item=B, Payload=Self>
+    {
+        {
+            // Assume dma object does not panic
+            let txstream = self.dmatx.as_ref().unwrap();
+            // This is a sanity check. Due to move semantics the channel is *never* in use at this point
+            debug_assert!(!txstream.is_enabled());
+
+            let slice: &mut [u8] = words;
+            txstream.set_config(
+                slice.as_ptr() as u32,
+                &self.spi.dr as *const _ as u32,
+                u16(slice.len()).unwrap(),
+            );
+
+            txstream.enable();
+        }
+        DmaTransferObject::new(self)
+    }
+}
+*/

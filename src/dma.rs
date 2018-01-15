@@ -1,11 +1,9 @@
-use core::marker::{Unsize, PhantomData};
-use core::ops;
+use core::marker::{PhantomData};
 use core::sync::atomic::{self, Ordering};
 use hal::dma::Transfer as DmaTransfer;
 use hal::dma::Error;
 
-use nb;
-use stm32f411::{DMA1, DMA2, dma2};
+use stm32f411::{DMA1, DMA2};
 pub use stm32f411::dma2::scr::CHSELW as Channel;
 pub use stm32f411::dma2::scr::DIRW as Direction;
 pub use stm32f411::dma2::scr::MBURSTW as MemoryBurst;
@@ -45,18 +43,22 @@ impl<Stream, B, Payload> Transfer<Stream, B, Payload> {
     }
 }
 
-// impl DmaTransfer<Buffer, Payload> for Transfer<Read, Stream, Buffer, Payload> {
-//     fn deref(&Self) -> &Buffer {
-//         self.buffer
-//     }
-// }
-// impl<Buffer, Payload> ops::Deref for Transfer<Read, Stream, Buffer, Payload> {
-//     type Target = Buffer;
 
-//     fn deref(&self) -> &Buffer {
-//         self.buffer
+// pub struct Transfer<Stream, Payload>
+// {
+//     _stream: PhantomData<Stream>,
+//     payload: Payload,
+// }
+
+// impl<Stream, Payload> Transfer<Stream, Payload> {
+//     pub(crate) fn new(payload: Payload) -> Self {
+//         Transfer {
+//             _stream: PhantomData,
+//             payload,
+//         }
 //     }
 // }
+
 
 macro_rules! streams {
     ($DMA:ident, $dmaen:ident, {
@@ -78,8 +80,6 @@ macro_rules! streams {
             pub struct $STREAM { _0: () }
 
             impl<B, Payload> DmaTransfer for Transfer<$STREAM, B, Payload>
-            where
-                B: Sized
             {
                 type Item = B;
                 type Payload = Payload;
@@ -99,7 +99,7 @@ macro_rules! streams {
                     }
                 }
 
-                fn wait(self) -> Result<(Self::Item, Payload), Error> {
+                fn wait(self) -> Result<(Self::Item, Self::Payload), Error> {
                     while !self.is_done()? {}
 
                     atomic::compiler_fence(Ordering::SeqCst);

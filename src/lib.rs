@@ -24,18 +24,18 @@ pub mod pwm;
 use cortex_m::itm;
 
 // TODO remove
-#[lang = "panic_fmt"]
-unsafe extern "C" fn panic_fmt(
-    args: ::core::fmt::Arguments,
-    file: &'static str,
-    line: u32,
-    col: u32,
-) -> ! {
-    let itm = &*cortex_m::peripheral::ITM::ptr();
+// #[lang = "panic_fmt"]
+// unsafe extern "C" fn panic_fmt(
+//     args: ::core::fmt::Arguments,
+//     file: &'static str,
+//     line: u32,
+//     col: u32,
+// ) -> ! {
+//     let itm = &*cortex_m::peripheral::ITM::ptr();
 
-    itm::write_str(&itm.stim[0], "panicked at '");
-    itm::write_fmt(&itm.stim[0], args);
-    iprintln!(&itm.stim[0], "', {}:{}:{}", file, line, col);
+//     itm::write_str(&itm.stim[0], "panicked at '");
+//     itm::write_fmt(&itm.stim[0], args);
+//     iprintln!(&itm.stim[0], "', {}:{}:{}", file, line, col);
 
-    ::core::intrinsics::abort()
-}
+//     ::core::intrinsics::abort()
+// }

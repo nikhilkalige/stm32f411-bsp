@@ -31,18 +31,18 @@ impl<PIN> PwmPin for Pwm<T1C1, PIN> {
 
     fn disable(&mut self) {
         unsafe {
-            bb::clear(&(*TIM1::ptr()).ccer, 4);
+            bb::clear(&(*TIM1::ptr()).ccer, 0);
         }
     }
 
     fn enable(&mut self) {
         unsafe {
-            bb::set(&(*TIM1::ptr()).ccer, 4);
+            bb::set(&(*TIM1::ptr()).ccer, 0);
         }
     }
 
     fn get_duty(&self) -> u16 {
-        unsafe { (*TIM1::ptr()).ccr2.read().ccr2().bits() }
+        unsafe { (*TIM1::ptr()).ccr1.read().ccr1().bits() }
     }
 
     fn get_max_duty(&self) -> u16 {
@@ -50,7 +50,7 @@ impl<PIN> PwmPin for Pwm<T1C1, PIN> {
     }
 
     fn set_duty(&mut self, duty: u16) {
-        unsafe { (*TIM1::ptr()).ccr2.write(|w| w.ccr2().bits(duty)) }
+        unsafe { (*TIM1::ptr()).ccr1.write(|w| w.ccr1().bits(duty)) }
     }
 }
 
